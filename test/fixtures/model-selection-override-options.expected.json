@@ -1,0 +1,14 @@
+{
+  "instanceId": "codex",
+  "model": "gpt-5.6-sol",
+  "options": [
+    {
+      "id": "reasoningEffort",
+      "value": "xhigh"
+    },
+    {
+      "id": "serviceTier",
+      "value": "priority"
+    }
+  ]
+}

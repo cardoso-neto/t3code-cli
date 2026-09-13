@@ -1,0 +1,53 @@
+{
+  "type": "thread.turn.start",
+  "commandId": "cmd-1",
+  "createdAt": "2026-09-13T00:00:00.000Z",
+  "threadId": "thread-1",
+  "message": {
+    "messageId": "msg-1",
+    "role": "user",
+    "text": "Hello",
+    "attachments": [
+      {
+        "type": "image",
+        "name": "a.png",
+        "mimeType": "image/png",
+        "sizeBytes": 3,
+        "dataUrl": "data:image/png;base64,AAA="
+      }
+    ]
+  },
+  "runtimeMode": "full-access",
+  "interactionMode": "default",
+  "modelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-6-astra",
+    "options": [
+      {
+        "id": "reasoningEffort",
+        "value": "high"
+      }
+    ]
+  },
+  "bootstrap": {
+    "createThread": {
+      "createdAt": "2026-09-13T00:00:00.000Z",
+      "projectId": "proj-1",
+      "title": "Investigate",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-astra",
+        "options": [
+          {
+            "id": "reasoningEffort",
+            "value": "high"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": null,
+      "worktreePath": null
+    }
+  }
+}

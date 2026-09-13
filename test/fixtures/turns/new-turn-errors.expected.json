@@ -1,0 +1,8 @@
+{
+  "outcome": {
+    "state": "error",
+    "turnId": "turn-1",
+    "lastError": "model rejected"
+  },
+  "settledAtEvent": 2
+}

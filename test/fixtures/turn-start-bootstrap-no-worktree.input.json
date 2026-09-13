@@ -1,0 +1,34 @@
+{
+  "builder": "bootstrapTurnStart",
+  "input": {
+    "thread": {
+      "projectId": "proj-1",
+      "projectCwd": "/repo",
+      "title": "Investigate",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-astra",
+        "options": [
+          {
+            "id": "reasoningEffort",
+            "value": "high"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default"
+    },
+    "turn": {
+      "text": "Hello",
+      "attachments": [
+        {
+          "type": "image",
+          "name": "a.png",
+          "mimeType": "image/png",
+          "sizeBytes": 3,
+          "dataUrl": "data:image/png;base64,AAA="
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "detail": {
+    "id": "t",
+    "projectId": "p",
+    "title": "T",
+    "modelSelection": {
+      "instanceId": "codex",
+      "model": "m"
+    },
+    "runtimeMode": "full-access",
+    "interactionMode": "default",
+    "branch": null,
+    "worktreePath": null,
+    "latestTurn": null,
+    "session": null,
+    "createdAt": "x",
+    "updatedAt": "x",
+    "archivedAt": null,
+    "settledAt": null,
+    "hasPendingApprovals": false,
+    "hasPendingUserInput": false,
+    "hasActionableProposedPlan": false,
+    "messages": [],
+    "proposedPlans": [],
+    "activities": [],
+    "checkpoints": []
+  },
+  "expectNewTurn": true,
+  "events": [
+    {
+      "sequence": 1,
+      "eventId": "e1",
+      "type": "thread.session-set",
+      "aggregateId": "t",
+      "occurredAt": "2026-09-13T00:00:00.000Z",
+      "commandId": null,
+      "payload": {
+        "threadId": "t",
+        "session": {
+          "threadId": "t",
+          "status": "starting",
+          "providerName": "codex",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-09-13T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "sequence": 2,
+      "eventId": "e2",
+      "type": "thread.session-set",
+      "aggregateId": "t",
+      "occurredAt": "2026-09-13T00:00:00.000Z",
+      "commandId": null,
+      "payload": {
+        "threadId": "t",
+        "session": {
+          "threadId": "t",
+          "status": "running",
+          "providerName": "codex",
+          "runtimeMode": "full-access",
+          "activeTurnId": "turn-1",
+          "lastError": null,
+          "updatedAt": "2026-09-13T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "eventId": "e3",
+      "type": "thread.activity-appended",
+      "aggregateId": "t",
+      "occurredAt": "2026-09-13T00:00:00.000Z",
+      "commandId": null,
+      "payload": {
+        "threadId": "t",
+        "activity": {
+          "id": "a",
+          "tone": "approval",
+          "kind": "approval.requested",
+          "summary": "Run rm -rf",
+          "payload": {
+            "requestId": "req-1"
+          },
+          "turnId": "turn-1",
+          "createdAt": "x"
+        }
+      }
+    }
+  ]
+}

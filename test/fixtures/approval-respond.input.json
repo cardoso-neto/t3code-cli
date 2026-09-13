@@ -1,0 +1,11 @@
+{
+  "builder": "threadCommand",
+  "input": {
+    "type": "thread.approval.respond",
+    "threadId": "thread-1",
+    "fields": {
+      "requestId": "req-1",
+      "decision": "acceptForSession"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+[
+  "option \"effort\" must be one of low, high",
+  "option \"fastMode\" expects true or false",
+  "option \"thinking\" is not offered by claude-opus-5; offered: effort, fastMode"
+]

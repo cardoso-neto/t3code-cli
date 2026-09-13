@@ -1,0 +1,6 @@
+{
+  "builder": "titleFromPrompt",
+  "input": {
+    "text": "\n# Investigate reconnect failures\n\nDetails..."
+  }
+}

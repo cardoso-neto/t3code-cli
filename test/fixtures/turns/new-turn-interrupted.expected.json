@@ -1,0 +1,8 @@
+{
+  "outcome": {
+    "state": "interrupted",
+    "turnId": "turn-1",
+    "lastError": null
+  },
+  "settledAtEvent": 2
+}

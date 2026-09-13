@@ -1,0 +1,13 @@
+{
+  "builder": "modelSelection",
+  "input": {
+    "options": [
+      "reasoningEffort=xhigh",
+      "serviceTier=priority"
+    ],
+    "inherited": {
+      "instanceId": "codex",
+      "model": "gpt-5.6-sol"
+    }
+  }
+}

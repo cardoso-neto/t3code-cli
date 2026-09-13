@@ -1,0 +1,8 @@
+{
+  "type": "project.create",
+  "commandId": "cmd-1",
+  "createdAt": "2026-09-13T00:00:00.000Z",
+  "projectId": "proj-2",
+  "title": "x",
+  "workspaceRoot": "/x"
+}

@@ -1,0 +1,10 @@
+{
+  "builder": "threadCommand",
+  "input": {
+    "type": "thread.unsettle",
+    "threadId": "thread-1",
+    "fields": {
+      "reason": "user"
+    }
+  }
+}

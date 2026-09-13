@@ -1,0 +1,7 @@
+{
+  "type": "thread.unsettle",
+  "commandId": "cmd-1",
+  "createdAt": "2026-09-13T00:00:00.000Z",
+  "threadId": "thread-1",
+  "reason": "user"
+}

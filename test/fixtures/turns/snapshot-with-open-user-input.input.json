@@ -1,0 +1,57 @@
+{
+  "detail": {
+    "id": "t",
+    "projectId": "p",
+    "title": "T",
+    "modelSelection": {
+      "instanceId": "codex",
+      "model": "m"
+    },
+    "runtimeMode": "full-access",
+    "interactionMode": "default",
+    "branch": null,
+    "worktreePath": null,
+    "latestTurn": {
+      "turnId": "turn-0",
+      "state": "running",
+      "requestedAt": "x",
+      "startedAt": null,
+      "completedAt": null,
+      "assistantMessageId": null
+    },
+    "session": {
+      "threadId": "t",
+      "status": "running",
+      "providerName": "codex",
+      "runtimeMode": "full-access",
+      "activeTurnId": "turn-0",
+      "lastError": null,
+      "updatedAt": "2026-09-13T00:00:00.000Z"
+    },
+    "createdAt": "x",
+    "updatedAt": "x",
+    "archivedAt": null,
+    "settledAt": null,
+    "hasPendingApprovals": false,
+    "hasPendingUserInput": false,
+    "hasActionableProposedPlan": false,
+    "messages": [],
+    "proposedPlans": [],
+    "activities": [
+      {
+        "id": "a",
+        "tone": "approval",
+        "kind": "user-input.requested",
+        "summary": "Which?",
+        "payload": {
+          "requestId": "q-1"
+        },
+        "turnId": "turn-1",
+        "createdAt": "x"
+      }
+    ],
+    "checkpoints": []
+  },
+  "expectNewTurn": false,
+  "events": []
+}

@@ -1,0 +1,11 @@
+{
+  "builder": "modelSelection",
+  "input": {
+    "instanceId": "claudeAgent",
+    "model": "claude-opus-5",
+    "options": [
+      "fastMode=true",
+      "effort=max"
+    ]
+  }
+}

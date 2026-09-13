@@ -1,0 +1,16 @@
+{
+  "builder": "modelSelection",
+  "input": {
+    "model": "gpt-6-astra",
+    "inherited": {
+      "instanceId": "codex",
+      "model": "gpt-5.6-sol",
+      "options": [
+        {
+          "id": "reasoningEffort",
+          "value": "low"
+        }
+      ]
+    }
+  }
+}

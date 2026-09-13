@@ -1,0 +1,32 @@
+{
+  "builder": "bootstrapTurnStart",
+  "input": {
+    "thread": {
+      "projectId": "proj-1",
+      "projectCwd": "/repo",
+      "title": "Investigate",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-astra",
+        "options": [
+          {
+            "id": "reasoningEffort",
+            "value": "high"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "worktree": {
+        "baseBranch": "main",
+        "branch": "nei/x",
+        "startFromOrigin": true,
+        "runSetupScript": true
+      }
+    },
+    "turn": {
+      "text": "Hello",
+      "titleSeed": "Investigate"
+    }
+  }
+}

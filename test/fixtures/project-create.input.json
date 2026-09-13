@@ -1,0 +1,11 @@
+{
+  "builder": "projectCommand",
+  "input": {
+    "type": "project.create",
+    "fields": {
+      "projectId": "proj-2",
+      "title": "x",
+      "workspaceRoot": "/x"
+    }
+  }
+}

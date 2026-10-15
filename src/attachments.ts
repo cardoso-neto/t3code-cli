@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import type { ChatImageAttachment } from "@t3tools/contracts";
-import type { Command, T3Client } from "./client.ts";
+import type { RpcInput, T3Client } from "./client.ts";
 import { UsageError } from "./errors.ts";
 
-type Attachment = Extract<Command, { type: "thread.turn.start" }>["message"]["attachments"][number];
+type Attachment = Extract<RpcInput<"orchestration.dispatchCommand">, { type: "message.dispatch" }>["attachments"][number];
+type ImageUpload = Exclude<RpcInput<"attachments.createUploadUrl">, { type: "file" }>;
 
-const IMAGE_MIME_BY_EXTENSION: Record<string, ChatImageAttachment["mimeType"]> = {
+const IMAGE_MIME_BY_EXTENSION: Record<string, ImageUpload["mimeType"]> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -14,7 +14,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, ChatImageAttachment["mimeType"]> =
   ".webp": "image/webp",
 };
 
-/** Images go inline as data URLs; other files are uploaded first and referenced by id. Limits are the server's to enforce. */
+/** Uploads each file and returns references the next message claims. Limits are the server's to enforce. */
 export async function attachmentsFromPaths(client: T3Client, paths: string[]): Promise<Attachment[]> {
   const attachments: Attachment[] = [];
   for (const path of paths) {
@@ -22,14 +22,10 @@ export async function attachmentsFromPaths(client: T3Client, paths: string[]): P
     const name = basename(path);
     const sizeBytes = bytes.byteLength;
     const imageMime = IMAGE_MIME_BY_EXTENSION[extname(path).toLowerCase()];
-    if (imageMime) {
-      attachments.push({ type: "image", name, mimeType: imageMime, sizeBytes, dataUrl: `data:${imageMime};base64,${bytes.toString("base64")}` });
-      continue;
-    }
-    const mimeType = "application/octet-stream";
-    const upload = await client.call("attachments.createUploadUrl", { type: "file", name, mimeType, sizeBytes });
-    await client.http("POST", upload.relativeUrl, { bytes, mimeType });
-    attachments.push({ type: "file", id: upload.attachmentId, name, mimeType, sizeBytes });
+    const reference = imageMime ? { type: "image" as const, name, mimeType: imageMime, sizeBytes } : { type: "file" as const, name, mimeType: "application/octet-stream", sizeBytes };
+    const upload = await client.call("attachments.createUploadUrl", reference);
+    await client.http("POST", upload.relativeUrl, { bytes, mimeType: reference.mimeType });
+    attachments.push({ ...reference, id: upload.attachmentId });
   }
   return attachments;
 }

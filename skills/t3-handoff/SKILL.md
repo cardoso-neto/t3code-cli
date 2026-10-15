@@ -16,11 +16,11 @@ t3c watch "$id" > "$events" &
 t3c wait "$id" --timeout 2h --json > "$result"
 ```
 
-- `$result` holds `state`, `turnId`, `text` (the final reply), and `lastError`.
-- Exit codes: 0 completed, 2 error, 3 interrupted, 4 waiting on approval or input, 124 timeout.
-  - On 4, run `t3c pending "$id"` and answer with `t3c approve` or `t3c answer`.
-  - A timeout never cancels the turn; `t3c wait "$id"` again to keep waiting.
-- Follow up with `t3c send "$id" --wait < more.md`.
+- `$result` holds `state`, `runId`, `text` (the final reply), and `lastError`.
+- Exit codes: 0 completed, 2 failed, 3 interrupted, cancelled, or rolled back, 4 waiting on approval or input, 124 timeout.
+  - On 4, run `t3c pending "$id"` and answer with `t3c approve` or `t3c answer`; the request id is optional when only one is pending.
+  - A timeout never cancels the run; `t3c wait "$id"` again to keep waiting.
+- Follow up with `t3c send "$id" --wait < more.md`; it queues behind a running run.
 - Pick providers, models, and option ids from `t3c providers` and `t3c models`; the installed server is authoritative.
 - Add `--prepare-worktree --branch <name>` when the child edits files and the parent keeps working in the same checkout.
 - Use `--runtime-mode approval-required` when a human should approve commands; then poll with `t3c pending`.

@@ -1,0 +1,223 @@
+{
+  "target": {
+    "messageId": "fccb7105-62c7-4c86-8708-69b655c27fd7"
+  },
+  "items": [
+    {
+      "kind": "snapshot",
+      "snapshotSequence": 21,
+      "projection": {
+        "runs": [
+          {
+            "id": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:1",
+            "threadId": "55977198-066b-4722-a679-7dc11faec691",
+            "ordinal": 1,
+            "providerInstanceId": "codex",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-6-astra",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "low"
+                }
+              ]
+            },
+            "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1",
+            "userMessageId": "aafaaabe-0ab1-4c72-839e-a2f81496cd43",
+            "rootNodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1:root",
+            "activeAttemptId": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1:attempt:1",
+            "status": "completed",
+            "queuePosition": null,
+            "requestedAt": "2026-10-15T02:01:28.752Z",
+            "startedAt": "2026-10-15T02:01:29.010Z",
+            "completedAt": "2026-10-15T02:01:33.847Z",
+            "checkpointId": "checkpoint:scope:checkpoint-scope%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aname%3Aroot:name:1",
+            "contextHandoffId": null,
+            "workspacePreparation": {
+              "type": "root"
+            }
+          }
+        ],
+        "runtimeRequests": [],
+        "turnItems": []
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 43,
+      "event": {
+        "id": "event:thread:55977198-066b-4722-a679-7dc11faec691:command:83ab5eea-3474-4945-9185-79429d3bcf4a:1e492e09-1b9d-4fb3-9248-a12a246903d3",
+        "threadId": "55977198-066b-4722-a679-7dc11faec691",
+        "runId": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+        "nodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:34.107Z",
+        "type": "run.created",
+        "payload": {
+          "id": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+          "threadId": "55977198-066b-4722-a679-7dc11faec691",
+          "ordinal": 2,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1",
+          "userMessageId": "fccb7105-62c7-4c86-8708-69b655c27fd7",
+          "rootNodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:attempt:1",
+          "status": "starting",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:34.107Z",
+          "startedAt": null,
+          "completedAt": null,
+          "checkpointId": null,
+          "contextHandoffId": null
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 44,
+      "event": {
+        "id": "event:thread:55977198-066b-4722-a679-7dc11faec691:command:83ab5eea-3474-4945-9185-79429d3bcf4a:c0b80d5c-dcae-48fb-ac77-fdf1d0214521",
+        "threadId": "55977198-066b-4722-a679-7dc11faec691",
+        "runId": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+        "nodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:34.107Z",
+        "type": "run-attempt.created",
+        "payload": {
+          "id": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:attempt:1"
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 51,
+      "event": {
+        "id": "event:thread:55977198-066b-4722-a679-7dc11faec691:b65b7812-6512-433c-9dc0-df58d55a8a88",
+        "threadId": "55977198-066b-4722-a679-7dc11faec691",
+        "runId": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+        "nodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:34.114Z",
+        "type": "run.updated",
+        "payload": {
+          "id": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+          "threadId": "55977198-066b-4722-a679-7dc11faec691",
+          "ordinal": 2,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1",
+          "userMessageId": "fccb7105-62c7-4c86-8708-69b655c27fd7",
+          "rootNodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:attempt:1",
+          "status": "running",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:34.107Z",
+          "startedAt": "2026-10-15T02:01:34.114Z",
+          "completedAt": null,
+          "checkpointId": null,
+          "contextHandoffId": null
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 61,
+      "event": {
+        "id": "event:thread:55977198-066b-4722-a679-7dc11faec691:483076d8-aed9-4a1d-954d-cbc801215396",
+        "threadId": "55977198-066b-4722-a679-7dc11faec691",
+        "runId": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+        "nodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:39.348Z",
+        "type": "run.updated",
+        "payload": {
+          "id": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+          "threadId": "55977198-066b-4722-a679-7dc11faec691",
+          "ordinal": 2,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1",
+          "userMessageId": "fccb7105-62c7-4c86-8708-69b655c27fd7",
+          "rootNodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:attempt:1",
+          "status": "waiting",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:34.107Z",
+          "startedAt": "2026-10-15T02:01:34.114Z",
+          "completedAt": null,
+          "checkpointId": null,
+          "contextHandoffId": null
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 66,
+      "event": {
+        "id": "event:thread:55977198-066b-4722-a679-7dc11faec691:command:command%3Aeffect%3Acheckpoint.capture%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:76061780-3ee4-4914-b009-96bb3e99d9e4",
+        "threadId": "55977198-066b-4722-a679-7dc11faec691",
+        "runId": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+        "nodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:39.352Z",
+        "type": "run.updated",
+        "payload": {
+          "id": "run:thread:55977198-066b-4722-a679-7dc11faec691:ordinal:2",
+          "threadId": "55977198-066b-4722-a679-7dc11faec691",
+          "ordinal": 2,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A1",
+          "userMessageId": "fccb7105-62c7-4c86-8708-69b655c27fd7",
+          "rootNodeId": "node:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aordinal%3A2:attempt:1",
+          "status": "completed",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:34.107Z",
+          "startedAt": "2026-10-15T02:01:34.114Z",
+          "completedAt": "2026-10-15T02:01:39.352Z",
+          "checkpointId": "checkpoint:scope:checkpoint-scope%3Athread%3A55977198-066b-4722-a679-7dc11faec691%3Aname%3Aroot:name:2",
+          "contextHandoffId": null
+        }
+      }
+    }
+  ]
+}

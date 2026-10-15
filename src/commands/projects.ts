@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { boolFlag, enumFlag, positional, stringFlag, type Command } from "../cli.ts";
+import type { RpcInput, T3Client } from "../client.ts";
 import { UsageError } from "../errors.ts";
 import { MODEL_FLAGS, modelFromFlags } from "../model.ts";
 import { resolveProject } from "../resolve.ts";
@@ -13,8 +14,8 @@ export const projectAdd: Command = {
   async run({ client: connect, args, print }) {
     const workspaceRoot = resolve(positional(args, 0, "path"));
     const projectId = randomUUID();
-    const result = await (await connect()).dispatch({ type: "project.create", projectId, title: stringFlag(args, "title") ?? basename(workspaceRoot), workspaceRoot });
-    print({ projectId, ...result }, () => projectId);
+    const project = await mutate(await connect(), { type: "project.create", projectId, title: stringFlag(args, "title") ?? basename(workspaceRoot), workspaceRoot });
+    print(project, () => project.id);
   },
 };
 
@@ -40,7 +41,7 @@ export const projectSet: Command = {
       autoPull: autoPull && autoPull === "true",
     };
     if (Object.values(fields).every((value) => value === undefined)) throw new UsageError("nothing to set");
-    print(await client.dispatch({ type: "project.meta.update", projectId: project.id, ...fields }), () => `updated ${project.id}`);
+    print(await mutate(client, { type: "project.update", projectId: project.id, ...fields }), () => `updated ${project.id}`);
   },
 };
 
@@ -52,6 +53,13 @@ export const projectRemove: Command = {
   async run({ client: connect, args, print }) {
     const client = await connect();
     const project = resolveProject(await client.shell(), positional(args, 0, "project"));
-    print(await client.dispatch({ type: "project.delete", projectId: project.id, force: boolFlag(args, "force") || undefined }), () => `removed ${project.id}`);
+    print(await mutate(client, { type: "project.delete", projectId: project.id, force: boolFlag(args, "force") || undefined }), () => `removed ${project.id}`);
   },
 };
+
+type Mutation = RpcInput<"projects.mutate">;
+type MutationFields = Mutation extends infer M ? (M extends Mutation ? Omit<M, "commandId"> : never) : never;
+
+function mutate(client: T3Client, fields: MutationFields) {
+  return client.call("projects.mutate", { ...fields, commandId: randomUUID() } as Mutation);
+}

@@ -1,6 +1,6 @@
 import { INTERACTION_MODES, RUNTIME_MODES, boolFlag, enumFlag, intFlag, parseDuration, positional, stringFlag, type Command } from "../cli.ts";
-import type { CommandFields } from "../client.ts";
-import { UsageError } from "../errors.ts";
+import type { CommandFields, ThreadProjection } from "../client.ts";
+import { T3Error, UsageError } from "../errors.ts";
 import { MODEL_FLAGS, checkModel, modelFromFlags } from "../model.ts";
 import { lookupThread } from "../resolve.ts";
 
@@ -46,30 +46,45 @@ export const snooze: Command = {
 
 export const stop: Command = {
   name: "stop",
-  summary: "Stop the thread's provider session process. The conversation stays; the next send restarts it.",
-  usage: "stop <thread> [--only-if-settled]",
-  flags: { "only-if-settled": { type: "boolean", help: "no-op unless the thread is settled" } },
+  summary: "Detach the thread's provider sessions, stopping their processes. The conversation stays; the next send starts a new session.",
+  usage: "stop <thread>",
   async run({ client: connect, args, print }) {
     const client = await connect();
     const thread = await lookupThread(client, positional(args, 0, "thread"));
-    const onlyIfSettled = boolFlag(args, "only-if-settled") || undefined;
-    print(await client.dispatch({ type: "thread.session.stop", threadId: thread.id, onlyIfSettled }), () => `stop requested on ${thread.id}`);
+    const results = [];
+    for (const session of (await client.thread(thread.id)).providerSessions) {
+      results.push({ providerSessionId: session.id, ...(await client.dispatch({ type: "provider-session.detach", threadId: thread.id, providerSessionId: session.id, reason: "client-requested" })) });
+    }
+    print(results, () => `detached ${results.length} provider session(s) from ${thread.id}`);
   },
 };
 
 export const revert: Command = {
   name: "revert",
-  summary: "Restore the workspace to the checkpoint taken after turn N (0 = before the first turn).",
-  usage: "revert <thread> --turn-count <n>",
-  flags: { "turn-count": { type: "string", value: "n", help: "checkpoint turn count to restore" } },
+  summary: "Roll the thread back to the checkpoint taken after run N (0 = before the first run), restoring files unless --keep-files.",
+  usage: "revert <thread> --turn-count <n> [--keep-files]",
+  flags: {
+    "turn-count": { type: "string", value: "n", help: "run ordinal whose checkpoint to restore" },
+    "keep-files": { type: "boolean", help: "rewind only the conversation; required outside an isolated worktree" },
+  },
   async run({ client: connect, args, print }) {
     const turnCount = intFlag(args, "turn-count");
     if (turnCount === undefined) throw new UsageError("--turn-count is required");
     const client = await connect();
     const thread = await lookupThread(client, positional(args, 0, "thread"));
-    print(await client.dispatch({ type: "thread.checkpoint.revert", threadId: thread.id, turnCount }), () => `revert to turn ${turnCount} requested on ${thread.id}`);
+    const checkpoint = checkpointAfterRun((await client.thread(thread.id)).checkpoints, turnCount);
+    if (!checkpoint) throw new T3Error(`${thread.id} has no ready checkpoint for run ${turnCount}`);
+    const restoreFiles = boolFlag(args, "keep-files") ? false : undefined;
+    const result = await client.dispatch({ type: "checkpoint.rollback", threadId: thread.id, scopeId: checkpoint.scopeId, checkpointId: checkpoint.id, restoreFiles });
+    print({ checkpointId: checkpoint.id, ...result }, () => `rollback to run ${turnCount} requested on ${thread.id}`);
   },
 };
+
+/** The ready checkpoint taken after run `ordinal`; 0 is the thread's initial checkpoint. */
+export function checkpointAfterRun(checkpoints: ThreadProjection["checkpoints"], ordinal: number) {
+  const checkpoint = checkpoints.findLast((candidate) => (ordinal === 0 ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null : candidate.appRunOrdinal === ordinal));
+  return checkpoint?.status === "ready" ? checkpoint : undefined;
+}
 
 export const remove: Command = {
   name: "delete",
@@ -101,23 +116,18 @@ export const set: Command = {
     const client = await connect();
     const thread = await lookupThread(client, positional(args, 0, "thread"));
     const modelSelection = modelFromFlags(args, thread.modelSelection);
-    if (modelSelection && !boolFlag(args, "no-validate")) {
-      const provider = await checkModel(client, modelSelection);
-      if (provider.requiresNewThreadForModelChange && modelSelection.instanceId !== thread.modelSelection.instanceId) {
-        process.stderr.write(`warning: ${provider.instanceId} requires a new thread for model changes; the next turn may fail\n`);
-      }
-    }
+    if (modelSelection && !boolFlag(args, "no-validate")) await checkModel(client, modelSelection);
     const pullRequest = stringFlag(args, "pull-request");
     const meta = {
       title: stringFlag(args, "title"),
-      regenerateTitle: boolFlag(args, "regenerate-title") ? (true as const) : undefined,
-      modelSelection,
+      regenerateTitle: boolFlag(args, "regenerate-title") || undefined,
       linkedPullRequest: boolFlag(args, "unlink-pull-request") ? null : pullRequest ? parsePullRequestUrl(pullRequest, thread.projectId) : undefined,
     };
     const runtimeMode = enumFlag(args, "runtime-mode", RUNTIME_MODES);
     const interactionMode = enumFlag(args, "interaction-mode", INTERACTION_MODES);
     const commands: ThreadCommand[] = [
-      ...(Object.values(meta).some((value) => value !== undefined) ? [{ type: "thread.meta.update" as const, threadId: thread.id, ...meta }] : []),
+      ...(Object.values(meta).some((value) => value !== undefined) ? [{ type: "thread.metadata.update" as const, threadId: thread.id, ...meta }] : []),
+      ...(modelSelection ? [{ type: "thread.model-selection.set" as const, threadId: thread.id, modelSelection }] : []),
       ...(runtimeMode ? [{ type: "thread.runtime-mode.set" as const, threadId: thread.id, runtimeMode }] : []),
       ...(interactionMode ? [{ type: "thread.interaction-mode.set" as const, threadId: thread.id, interactionMode }] : []),
     ];

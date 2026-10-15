@@ -1,20 +1,8 @@
 {
   "outcome": {
-    "state": "needs-input",
-    "turnId": "turn-1",
-    "pending": [
-      {
-        "id": "a",
-        "tone": "approval",
-        "kind": "approval.requested",
-        "summary": "s",
-        "payload": {
-          "requestId": "req-1"
-        },
-        "turnId": "turn-1",
-        "createdAt": "x"
-      }
-    ]
+    "state": "completed",
+    "runId": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+    "lastError": null
   },
   "settledAt": 3
 }

@@ -1,153 +1,167 @@
 {
-  "awaiting": "next",
+  "target": {
+    "current": true
+  },
   "items": [
     {
       "kind": "snapshot",
-      "snapshot": {
-        "snapshotSequence": 0,
-        "thread": {
-          "id": "t",
-          "projectId": "p",
-          "title": "T",
+      "snapshotSequence": 87,
+      "projection": {
+        "runs": [
+          {
+            "id": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+            "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+            "ordinal": 1,
+            "providerInstanceId": "codex",
+            "modelSelection": {
+              "instanceId": "codex",
+              "model": "gpt-6-astra",
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "value": "low"
+                }
+              ]
+            },
+            "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1",
+            "userMessageId": "b4ac67bb-18ad-4fac-838e-85a98835c1cd",
+            "rootNodeId": "node:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:root",
+            "activeAttemptId": "run-attempt:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:attempt:1",
+            "status": "running",
+            "queuePosition": null,
+            "requestedAt": "2026-10-15T02:01:46.519Z",
+            "startedAt": "2026-10-15T02:01:46.567Z",
+            "completedAt": null,
+            "checkpointId": null,
+            "contextHandoffId": null,
+            "workspacePreparation": {
+              "type": "root"
+            }
+          }
+        ],
+        "runtimeRequests": [
+          {
+            "id": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a13d4b-49ba-7fe3-b907-41850557ceda:native-request:exec-82386b72-525a-43ef-9060-8d1ed82246f1:ecff357c-3de0-4b10-8d95-ffde9e5a05d5",
+            "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a13d4b-49ba-7fe3-b907-41850557ceda%3Anative-request%3Aexec-82386b72-525a-43ef-9060-8d1ed82246f1%3Aecff357c-3de0-4b10-8d95-ffde9e5a05d5",
+            "providerTurnId": "provider-turn:provider:codex:native-turn:01a13d4b-49ba-7fe3-b907-41850557ceda",
+            "nativeRequestRef": {
+              "driver": "codex",
+              "nativeId": "exec-82386b72-525a-43ef-9060-8d1ed82246f1",
+              "strength": "strong"
+            },
+            "kind": "command",
+            "status": "resolved",
+            "responseCapability": {
+              "type": "live",
+              "providerSessionId": "provider-session:provider-instance:codex:shared"
+            },
+            "createdAt": "2026-10-15T02:01:50.935Z",
+            "resolvedAt": "2026-10-15T02:01:58.544Z",
+            "decision": "accept"
+          }
+        ],
+        "turnItems": []
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 98,
+      "event": {
+        "id": "event:thread:9b4be167-be79-468a-bf44-f760e9051825:command:e46d819c-cce8-4e41-8a82-e0fd277a2813:20862a51-a49f-486d-9547-36b4b91fc6c8",
+        "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+        "runId": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a13d4b-49ba-7fe3-b907-41850557ceda%3Anative-request%3Aexec-82386b72-525a-43ef-9060-8d1ed82246f1%3Aecff357c-3de0-4b10-8d95-ffde9e5a05d5",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:01:58.544Z",
+        "type": "node.updated",
+        "payload": {
+          "id": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a13d4b-49ba-7fe3-b907-41850557ceda%3Anative-request%3Aexec-82386b72-525a-43ef-9060-8d1ed82246f1%3Aecff357c-3de0-4b10-8d95-ffde9e5a05d5"
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "sequence": 109,
+      "event": {
+        "id": "event:thread:9b4be167-be79-468a-bf44-f760e9051825:222cc276-740c-4b85-981f-6d553b6e4527",
+        "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+        "runId": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+        "nodeId": "node:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:02:00.822Z",
+        "type": "run.updated",
+        "payload": {
+          "id": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+          "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+          "ordinal": 1,
+          "providerInstanceId": "codex",
           "modelSelection": {
             "instanceId": "codex",
-            "model": "m"
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
           },
-          "runtimeMode": "full-access",
-          "interactionMode": "default",
-          "branch": null,
-          "worktreePath": null,
-          "latestTurn": null,
-          "session": null,
-          "createdAt": "x",
-          "updatedAt": "x",
-          "archivedAt": null,
-          "settledAt": null,
-          "hasPendingApprovals": false,
-          "hasPendingUserInput": false,
-          "hasActionableProposedPlan": false,
-          "messages": [],
-          "proposedPlans": [],
-          "activities": [],
-          "checkpoints": []
-        }
-      }
-    },
-    {
-      "kind": "event",
-      "event": {
-        "sequence": 1,
-        "eventId": "e1",
-        "type": "thread.session-set",
-        "aggregateId": "t",
-        "occurredAt": "2026-09-13T00:00:00.000Z",
-        "commandId": null,
-        "payload": {
-          "threadId": "t",
-          "session": {
-            "threadId": "t",
-            "status": "starting",
-            "providerName": "codex",
-            "runtimeMode": "full-access",
-            "activeTurnId": null,
-            "lastError": null,
-            "updatedAt": "2026-09-13T00:00:00.000Z"
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1",
+          "userMessageId": "b4ac67bb-18ad-4fac-838e-85a98835c1cd",
+          "rootNodeId": "node:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:attempt:1",
+          "status": "waiting",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:46.519Z",
+          "startedAt": "2026-10-15T02:01:46.567Z",
+          "completedAt": null,
+          "checkpointId": null,
+          "contextHandoffId": null,
+          "workspacePreparation": {
+            "type": "root"
           }
         }
       }
     },
     {
       "kind": "event",
+      "sequence": 115,
       "event": {
-        "sequence": 2,
-        "eventId": "e2",
-        "type": "thread.session-set",
-        "aggregateId": "t",
-        "occurredAt": "2026-09-13T00:00:00.000Z",
-        "commandId": null,
+        "id": "event:thread:9b4be167-be79-468a-bf44-f760e9051825:command:command%3Aeffect%3Acheckpoint.capture%3Arun%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:e3854210-9725-4d92-a0f2-f2df3a6daabd",
+        "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+        "runId": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+        "nodeId": "node:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:root",
+        "providerInstanceId": "codex",
+        "occurredAt": "2026-10-15T02:02:00.825Z",
+        "type": "run.updated",
         "payload": {
-          "threadId": "t",
-          "session": {
-            "threadId": "t",
-            "status": "running",
-            "providerName": "codex",
-            "runtimeMode": "full-access",
-            "activeTurnId": "turn-1",
-            "lastError": null,
-            "updatedAt": "2026-09-13T00:00:00.000Z"
-          }
-        }
-      }
-    },
-    {
-      "kind": "event",
-      "event": {
-        "sequence": 3,
-        "eventId": "e3",
-        "type": "thread.activity-appended",
-        "aggregateId": "t",
-        "occurredAt": "2026-09-13T00:00:00.000Z",
-        "commandId": null,
-        "payload": {
-          "threadId": "t",
-          "activity": {
-            "id": "a",
-            "tone": "approval",
-            "kind": "approval.requested",
-            "summary": "s",
-            "payload": {
-              "requestId": "req-1"
-            },
-            "turnId": "turn-1",
-            "createdAt": "x"
-          }
-        }
-      }
-    },
-    {
-      "kind": "event",
-      "event": {
-        "sequence": 4,
-        "eventId": "e4",
-        "type": "thread.activity-appended",
-        "aggregateId": "t",
-        "occurredAt": "2026-09-13T00:00:00.000Z",
-        "commandId": null,
-        "payload": {
-          "threadId": "t",
-          "activity": {
-            "id": "a",
-            "tone": "approval",
-            "kind": "approval.resolved",
-            "summary": "s",
-            "payload": {
-              "requestId": "req-1"
-            },
-            "turnId": "turn-1",
-            "createdAt": "x"
-          }
-        }
-      }
-    },
-    {
-      "kind": "event",
-      "event": {
-        "sequence": 5,
-        "eventId": "e5",
-        "type": "thread.session-set",
-        "aggregateId": "t",
-        "occurredAt": "2026-09-13T00:00:00.000Z",
-        "commandId": null,
-        "payload": {
-          "threadId": "t",
-          "session": {
-            "threadId": "t",
-            "status": "ready",
-            "providerName": "codex",
-            "runtimeMode": "full-access",
-            "activeTurnId": null,
-            "lastError": null,
-            "updatedAt": "2026-09-13T00:00:00.000Z"
+          "id": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+          "threadId": "9b4be167-be79-468a-bf44-f760e9051825",
+          "ordinal": 1,
+          "providerInstanceId": "codex",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-6-astra",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "low"
+              }
+            ]
+          },
+          "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1",
+          "userMessageId": "b4ac67bb-18ad-4fac-838e-85a98835c1cd",
+          "rootNodeId": "node:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:root",
+          "activeAttemptId": "run-attempt:run:run%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aordinal%3A1:attempt:1",
+          "status": "completed",
+          "queuePosition": null,
+          "requestedAt": "2026-10-15T02:01:46.519Z",
+          "startedAt": "2026-10-15T02:01:46.567Z",
+          "completedAt": "2026-10-15T02:02:00.825Z",
+          "checkpointId": "checkpoint:scope:checkpoint-scope%3Athread%3A9b4be167-be79-468a-bf44-f760e9051825%3Aname%3Aroot:name:1",
+          "contextHandoffId": null,
+          "workspacePreparation": {
+            "type": "root"
           }
         }
       }

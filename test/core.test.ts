@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { ModelSelection, OrchestrationEvent, OrchestrationThreadActivity, OrchestrationThreadShell, ServerProviderModel } from "@t3tools/contracts";
+import type { ModelSelection } from "@t3tools/contracts";
 import { parseDuration } from "../src/cli.ts";
+import { checkpointAfterRun } from "../src/commands/lifecycle.ts";
 import { titleFromPrompt } from "../src/commands/turns.ts";
 import { pairingTokenFromUrl, selectEnvironment, type CredentialsFile } from "../src/credentials.ts";
 import { UsageError } from "../src/errors.ts";
-import { modelFromFlags, parseKeyValues, validateOptions } from "../src/model.ts";
-import { pickUnique } from "../src/resolve.ts";
-import { finalAssistantText, pendingRequests, summarizeEvent } from "../src/turn.ts";
+import { modelFromFlags, parseKeyValues, validateOptions, type ProviderModel } from "../src/model.ts";
+import { pickUnique, type ThreadShell } from "../src/resolve.ts";
+import { currentRun, finalAssistantText, pendingRequests, summarizeEvent, type Run, type StreamItem } from "../src/turn.ts";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -18,7 +19,7 @@ type ModelSelectionInput = { instanceId?: string; model?: string; options?: stri
 const RUNNERS: Record<string, (input: never) => unknown> = {
   modelSelection: ({ instanceId, model, options = [], inherited }: ModelSelectionInput) =>
     modelFromFlags({ values: { "instance-id": instanceId, model, option: options }, positionals: [] }, inherited),
-  validateOptions: ({ model, options }: { model: ServerProviderModel; options: string[] }) => validateOptions(model, parseKeyValues("option", options)),
+  validateOptions: ({ model, options }: { model: ProviderModel; options: string[] }) => validateOptions(model, parseKeyValues("option", options)),
   titleFromPrompt: ({ text }: { text: string }) => titleFromPrompt(text),
 };
 
@@ -50,8 +51,8 @@ test("pickUnique: exact beats prefix, ambiguity is an error", () => {
   const threads = [
     { id: "abc123", title: "Fix login" },
     { id: "abd456", title: "abc123-notes" },
-  ] as OrchestrationThreadShell[];
-  const keys = (thread: OrchestrationThreadShell) => [thread.id, thread.title];
+  ] as ThreadShell[];
+  const keys = (thread: ThreadShell) => [thread.id, thread.title];
   assert.deepEqual(pickUnique(threads, "abc123", "thread", keys), { found: threads[0] });
   assert.deepEqual(pickUnique(threads, "fix login", "thread", keys), { found: threads[0] });
   assert.match((pickUnique(threads, "ab", "thread", keys) as { error: string }).error, /matches 2 threads/);
@@ -81,29 +82,50 @@ test("selectEnvironment: selector, then default, then first", () => {
   assert.throws(() => selectEnvironment(file, "nope"));
 });
 
-test("pendingRequests drops resolved requests", () => {
-  const activity = (kind: string, requestId: string) => ({ kind, payload: { requestId } }) as unknown as OrchestrationThreadActivity;
-  const open = activity("user-input.requested", "r2");
-  assert.deepEqual(pendingRequests([activity("approval.requested", "r1"), open, activity("approval.resolved", "r1")]), [open]);
+test("currentRun prefers the newest active run, else the newest run", () => {
+  const run = (ordinal: number, status: Run["status"]) => ({ id: `r${ordinal}`, ordinal, status }) as Run;
+  assert.equal(currentRun([run(1, "completed"), run(2, "queued"), run(3, "completed")])?.id, "r2");
+  assert.equal(currentRun([run(1, "completed"), run(2, "failed")])?.id, "r2");
+  assert.equal(currentRun([]), undefined);
 });
 
-test("finalAssistantText prefers the turn's last assistant message", () => {
+test("pendingRequests joins open requests with their turn item", () => {
+  const runtimeRequests = [
+    { id: "q1", status: "resolved" },
+    { id: "q2", status: "pending" },
+  ];
+  const turnItems = [{ type: "assistant_message" }, { type: "approval_request", requestId: "q1" }, { type: "approval_request", requestId: "q2", prompt: "Run ls?" }];
+  const projection = { runtimeRequests, turnItems } as unknown as Parameters<typeof pendingRequests>[0];
+  assert.deepEqual(pendingRequests(projection), [{ request: runtimeRequests[1], item: turnItems[2] }]);
+});
+
+test("finalAssistantText prefers the run's last assistant message", () => {
   const messages = [
-    { role: "assistant", turnId: "t1", text: "first" },
-    { role: "assistant", turnId: "t2", text: "other turn" },
-    { role: "user", turnId: "t1", text: "question" },
+    { role: "assistant", runId: "r1", text: "first" },
+    { role: "assistant", runId: "r2", text: "other run" },
+    { role: "user", runId: "r1", text: "question" },
   ] as unknown as Parameters<typeof finalAssistantText>[0]["messages"];
-  assert.equal(finalAssistantText({ messages }, "t1"), "first");
-  assert.equal(finalAssistantText({ messages }, null), "other turn");
-  assert.equal(finalAssistantText({ messages: [] }, "t1"), "");
+  assert.equal(finalAssistantText({ messages }, "r1"), "first");
+  assert.equal(finalAssistantText({ messages }, null), "other run");
+  assert.equal(finalAssistantText({ messages: [] }, "r1"), "");
 });
 
-test("summarizeEvent buffers streamed text until the final message", () => {
+test("summarizeEvent shows only final, non-empty messages", () => {
   const message = (text: string, streaming: boolean) =>
-    ({ type: "thread.message-sent", payload: { messageId: "m1", role: "assistant", text, turnId: "t1", streaming } }) as OrchestrationEvent;
-  const streaming = new Map<string, string>();
-  assert.equal(summarizeEvent(message("Hel", true), streaming), null);
-  assert.equal(summarizeEvent(message("Hello", true), streaming), null);
-  assert.deepEqual(summarizeEvent(message("", false), streaming), { type: "message", role: "assistant", text: "Hello", turnId: "t1", messageId: "m1" });
-  assert.equal(streaming.size, 0);
+    ({ kind: "event", sequence: 1, event: { type: "message.updated", payload: { id: "m1", role: "assistant", text, runId: "r1", streaming } } }) as Extract<StreamItem, { kind: "event" }>;
+  assert.equal(summarizeEvent(message("Hel", true)), null);
+  assert.equal(summarizeEvent(message("", false)), null);
+  assert.deepEqual(summarizeEvent(message("Hello", false)), { type: "message", role: "assistant", text: "Hello", runId: "r1", messageId: "m1" });
+});
+
+test("checkpointAfterRun: 0 is the scope's baseline, otherwise the run's ready checkpoint", () => {
+  const checkpoints = [
+    { id: "base", ordinalWithinScope: 0, appRunOrdinal: null, status: "ready" },
+    { id: "after-1", ordinalWithinScope: 1, appRunOrdinal: 1, status: "ready" },
+    { id: "after-2", ordinalWithinScope: 2, appRunOrdinal: 2, status: "pending" },
+  ] as unknown as Parameters<typeof checkpointAfterRun>[0];
+  assert.equal(checkpointAfterRun(checkpoints, 0)?.id, "base");
+  assert.equal(checkpointAfterRun(checkpoints, 1)?.id, "after-1");
+  assert.equal(checkpointAfterRun(checkpoints, 2), undefined);
+  assert.equal(checkpointAfterRun(checkpoints, 3), undefined);
 });

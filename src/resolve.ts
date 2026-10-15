@@ -1,13 +1,14 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import type { OrchestrationProjectShell, OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
-import type { T3Client } from "./client.ts";
+import type { ShellSnapshot, T3Client } from "./client.ts";
 import { T3Error } from "./errors.ts";
 
+export type ThreadShell = ShellSnapshot["threads"][number];
+export type ProjectShell = ShellSnapshot["projects"][number];
 type Match<T> = { found: T } | { error: string };
 
 /** Finds a thread by id, id prefix, or title, falling back to archived threads, which the shell snapshot omits. */
-export async function lookupThread(client: T3Client, selector: string): Promise<OrchestrationThreadShell> {
+export async function lookupThread(client: T3Client, selector: string): Promise<ThreadShell> {
   const { threads } = await client.shell();
   const active = matchThread(threads, selector);
   if ("found" in active) return active.found;
@@ -17,12 +18,12 @@ export async function lookupThread(client: T3Client, selector: string): Promise<
   throw new T3Error(any.error);
 }
 
-export function matchThread(threads: readonly OrchestrationThreadShell[], selector: string): Match<OrchestrationThreadShell> {
+export function matchThread(threads: readonly ThreadShell[], selector: string): Match<ThreadShell> {
   return pickUnique(threads, selector, "thread", (thread) => [thread.id, thread.title]);
 }
 
 /** Finds a project by id, title, or workspace path (relative paths resolve against the cwd). */
-export function resolveProject(shell: OrchestrationShellSnapshot, selector: string): OrchestrationProjectShell {
+export function resolveProject(shell: ShellSnapshot, selector: string): ProjectShell {
   const match = pickUnique(shell.projects, selector, "project", (project) => [project.id, project.title, project.workspaceRoot, safeRealpath(project.workspaceRoot)], safeRealpath(resolve(selector)));
   if ("found" in match) return match.found;
   throw new T3Error(match.error);

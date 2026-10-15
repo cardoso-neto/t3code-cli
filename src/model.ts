@@ -1,7 +1,11 @@
-import type { ModelSelection, ProviderOptionDescriptor, ProviderOptionSelection, ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionSelection } from "@t3tools/contracts";
 import { listFlag, stringFlag, type ParsedArgs } from "./cli.ts";
-import type { T3Client } from "./client.ts";
+import type { RpcOutput, T3Client, Wire } from "./client.ts";
 import { T3Error, UsageError } from "./errors.ts";
+
+export type Provider = RpcOutput<"server.getConfig">["providers"][number];
+export type ProviderModel = Provider["models"][number];
+type OptionDescriptor = NonNullable<NonNullable<ProviderModel["capabilities"]>["optionDescriptors"]>[number];
 
 export const MODEL_FLAGS = {
   "instance-id": { type: "string", value: "id", help: "provider instance, e.g. codex, claudeAgent (see: t3c providers)" },
@@ -24,7 +28,9 @@ export function parseKeyValues(flag: string, entries: string[]): ProviderOptionS
  * The selection --instance-id, --model, and --option ask for, filled in from `inherited`.
  * Undefined when none of those flags were given.
  */
-export function modelFromFlags(args: ParsedArgs, inherited: ModelSelection | null | undefined): ModelSelection | undefined {
+export function modelFromFlags(args: ParsedArgs, wireInherited: Wire<typeof ModelSelection> | null | undefined): ModelSelection | undefined {
+  // Selections the server sends are canonical; the wire schema also admits a legacy `{ provider }` form on input.
+  const inherited = wireInherited as ModelSelection | null | undefined;
   const instanceIdFlag = stringFlag(args, "instance-id");
   const modelFlag = stringFlag(args, "model");
   const optionFlags = parseKeyValues("option", listFlag(args, "option"));
@@ -38,7 +44,7 @@ export function modelFromFlags(args: ParsedArgs, inherited: ModelSelection | nul
   return options?.length ? { instanceId, model, options } : { instanceId, model };
 }
 
-export function findModel(providers: readonly ServerProvider[], selection: ModelSelection): { provider: ServerProvider; model: ServerProviderModel } {
+export function findModel(providers: readonly Provider[], selection: ModelSelection): { provider: Provider; model: ProviderModel } {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (!provider) throw new T3Error(`unknown provider instance "${selection.instanceId}"; known: ${providers.map((p) => p.instanceId).join(", ")}`);
   const model = provider.models.find((candidate) => candidate.slug === selection.model);
@@ -47,7 +53,7 @@ export function findModel(providers: readonly ServerProvider[], selection: Model
 }
 
 /** Problems with `options` against the model's descriptors; empty when valid. */
-export function validateOptions(model: ServerProviderModel, options: readonly ProviderOptionSelection[]): string[] {
+export function validateOptions(model: ProviderModel, options: readonly ProviderOptionSelection[]): string[] {
   const descriptors = model.capabilities?.optionDescriptors ?? [];
   return options.flatMap((option) => {
     const descriptor = descriptors.find((candidate) => candidate.id === option.id);
@@ -57,21 +63,21 @@ export function validateOptions(model: ServerProviderModel, options: readonly Pr
   });
 }
 
-function describeOptionMismatch(descriptor: ProviderOptionDescriptor, value: string | boolean): string | null {
+function describeOptionMismatch(descriptor: OptionDescriptor, value: string | boolean): string | null {
   if (descriptor.type === "boolean") return typeof value === "boolean" ? null : `option "${descriptor.id}" expects true or false`;
   const allowed = descriptor.options.map((choice) => choice.id);
   return allowed.includes(String(value)) ? null : `option "${descriptor.id}" must be one of ${allowed.join(", ")}`;
 }
 
 /** Checks the selection against the server's catalog. Returns the provider so callers can inspect its capabilities. */
-export async function checkModel(client: T3Client, selection: ModelSelection): Promise<ServerProvider> {
+export async function checkModel(client: T3Client, selection: ModelSelection): Promise<Provider> {
   const { provider, model } = findModel((await client.call("server.getConfig", {})).providers, selection);
   const problems = validateOptions(model, selection.options ?? []);
   if (problems.length) throw new UsageError(`${problems.join("\n")}\n(pass --no-validate to send anyway)`);
   return provider;
 }
 
-export function describeOptions(model: ServerProviderModel): string[] {
+export function describeOptions(model: ProviderModel): string[] {
   return (model.capabilities?.optionDescriptors ?? []).map((descriptor) =>
     descriptor.type === "boolean"
       ? `${descriptor.id}=true|false`

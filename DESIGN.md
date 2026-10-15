@@ -5,7 +5,10 @@
 `t3c` is a thin TypeScript CLI that creates and drives T3 Code threads over the server's public API.
 It is downstream of t3code: no server changes, no forks.
 
-Built against t3code `v0.0.45` (pinned in `package.json` as `config.t3code`) and verified on a scratch `0.0.45` server on 2026-10-15.
+This branch speaks orchestration protocol 2, the protocol on upstream `main` after 0.0.45.
+It is built against the nightly tag `v0.0.46-nightly.20261014.3132` (pinned in `package.json` as `config.t3code`), whose contracts and WebSocket surface equal `main` on that date.
+Verified on a scratch server from that nightly on 2026-10-15.
+The release may still move beyond this nightly; bump the tag and fix what typecheck reports.
 
 ## Principles
 
@@ -28,6 +31,8 @@ Instead, `scripts/contracts.sh` (run by `npm install` and `npm run typecheck`) s
 
 - Imports are `import type` only, so nothing from t3code or Effect ships at runtime.
 - WebSocket method types derive from upstream's `WsRpcGroup`: `RpcInput<"server.getConfig">` is the encoded payload, `RpcOutput<…>` the result. `client.call` and `client.stream` are typed by method tag.
+- Protocol 2 schemas encode timestamps as `DateTime.Utc`, which the JSON codec writes as ISO strings. `Wire<Schema>` (in `client.ts`) is the encoded type with `DateTime` mapped to `string`; every wire type in the CLI is a `Wire<…>` of an upstream schema.
+- Upstream's stream and turn-item unions also admit unknown future types as `{ type: string }`. `StreamItem` in `turn.ts` types only the known arms, so `switch` narrowing works; unknown items still arrive and fall through.
 - `effect` is a devDependency at the version t3code's catalog pins for that tag.
 - Upgrading means bumping `config.t3code` and fixing what typecheck reports. Bumping to a tag with a new orchestration protocol fails at `PROTOCOL` in `client.ts` on purpose.
 
@@ -40,44 +45,53 @@ Leaving it out keeps a thread free of cross-contamination.
 
 ### All commands go over the WebSocket
 
-`POST /api/orchestration/dispatch` passes commands straight to the engine and ignores the `bootstrap` field, so a `thread.turn.start` with `bootstrap.createThread` fails with "thread does not exist".
-Only the WebSocket `orchestration.dispatchCommand` runs the create-thread, worktree, and setup-script steps.
-`T3Client.dispatch` always uses the WebSocket, so there is one dispatch path.
+Protocol 2 removed HTTP dispatch.
+Commands go to WS `orchestration.dispatchCommand`; thread launch and project changes have their own methods (`orchestration.launchThread`, `projects.mutate`).
 One socket per process is opened lazily and multiplexed by request id.
 HTTP is left for snapshot reads, the WebSocket ticket, file upload bytes, and the unauthenticated environment descriptor.
 
-### Waiting on a turn
+### Waiting on a run
 
-`turn.ts` folds `orchestration.subscribeThread` items into a `TurnState` with a pure `step` function.
-How it reads the opening snapshot depends on which turn is awaited:
+Protocol 2 models work as runs.
+Each user message starts its own run, which records the message as `userMessageId`; a message sent during a run queues behind it.
+`turn.ts` folds `orchestration.subscribeThread` items into a `TurnState` with a pure `step` function, then derives the outcome with `outcome`.
+The awaited run is chosen by a `Target`:
 
-- `current` (`wait`, `close`): the snapshot's turn. An idle thread settles immediately.
-- `next` (`send --wait`): the snapshot is taken before dispatching, so its turn is an older one. Settles after a running state.
-- `first` (`new --wait`): the thread is created by the dispatch, so the stream starts after it. The snapshot may show the turn running, settled, or not started yet (a pending turn start is not in the snapshot).
+- `{ messageId }` (`new --wait`, `send --wait`): the run whose `userMessageId` is the message the CLI just sent. The CLI picks the message id, so there is no race between dispatch and subscription.
+- `{ current: true }` (`wait`, `close`): the thread's newest active run in the first snapshot, else its newest run. A thread that never ran settles at once as completed.
 
-### Title seeding
+A run settles on a terminal status (`completed`, `failed`, `interrupted`, `cancelled`, `rolled_back`), or as `needs-input` while a runtime request is pending.
+`waiting` is not terminal: it means the provider is done and the checkpoint is being captured.
+A restart continuation (`restartContinuationOfRunId`) stands in for the run it continues.
 
-Sending `titleSeed` makes the server regenerate the title after the first turn, even when `createThread.title` is set.
-`new` sends `titleSeed` only when `--title` was not given.
+### Title generation
+
+`launchThread` takes `generateTitle`.
+`new` sets it only when `--title` was not given.
+
+### Creation source
+
+Commands that create messages carry `createdBy` and `creationSource`.
+Upstream has no `cli` source yet, so `t3c` sends `{ createdBy: "user", creationSource: "web" }`, the source the web composer uses.
 
 ## Server facts the design rests on
 
 | Fact | Consequence |
 | --- | --- |
-| Commands are a tagged `ClientOrchestrationCommand` sent to WS `orchestration.dispatchCommand`. Reads are `GET /api/orchestration/shell` and `GET /api/orchestration/threads/:id`. | Most commands are one dispatch. |
-| Dispatch returns only `{ sequence }`. Turn outcome arrives later as events. | `wait` and `watch` use the WebSocket stream `orchestration.subscribeThread`. |
+| `/ws` requires `orchestrationProtocol=2` and answers anything else with `426`. HTTP reads require the header `x-t3-orchestration-protocol: 2`. | `client.ts` sends both. A mismatch is reported from the environment descriptor. |
+| Reads are `GET /api/orchestration/shell` and `GET /api/orchestration/threads/:id` (`{ snapshotSequence, projection }`). The HTTP shell always returns `archivedThreads: []`. | Archived threads come from WS `orchestration.getArchivedShellSnapshot`. |
+| Dispatch returns only `{ sequence }`. Run outcomes arrive later as events. | `wait` and `watch` use the WebSocket stream `orchestration.subscribeThread`. |
 | The WebSocket is Effect RPC over JSON: `{_tag:"Request", id, tag, payload, headers:[]}`. Streams are ack-gated: the server withholds the next `Chunk` until the client sends `{_tag:"Ack", requestId}`. | `T3Client.stream` acks every chunk. Without it a subscription stalls after the first batch. |
+| `subscribeThread` sends a `snapshot` (the flat thread projection) then `event` items with `sequence`, plus `synchronized` markers. | The reducer reads runs, runtime requests, and error turn items from the snapshot, then applies `run.*`, `runtime-request.updated`, `turn-item.updated`, and `thread.deleted`. |
+| Approvals and questions are `runtimeRequests` with `status: "pending"`. The prompt or questions live on the matching `approval_request` or `user_input_request` turn item. Errors are `error` turn items with `failure.message`. | `pending` joins request and turn item. `wait` reports the run's error. |
+| `message.updated` sends the final text with `streaming: false`; the final event can also be empty. | `watch` prints only final, non-empty messages. |
 | Provider and model catalog is only on the wire as `ServerConfig.providers` via `server.getConfig` (WebSocket). Each model carries `capabilities.optionDescriptors`. | `providers` and `models` make one WebSocket call. `--option` values are validated against the descriptors. |
 | `modelSelection` is `{ instanceId, model, options: [{id, value}] }`. Effort is a per-driver option id: `reasoningEffort` (codex, grok), `effort` (claudeAgent), `variant` (opencode). | `--option id=value` is the only spelling. `t3c models` prints the ids. |
-| `thread.turn.start` accepts `bootstrap.createThread` and `bootstrap.prepareWorktree`. A failed worktree preparation sets an `error` session; other failures delete the thread. | `new` is one round trip. `new --wait` settles as `error` on either. |
-| `subscribeThread` with `afterSequence` replays events. If the replayed range contains the thread's creation and the thread still exists, the server sends a fresh snapshot instead. | `new --wait` subscribes with `afterSequence: 0` after dispatching and handles both. |
+| File restore on `checkpoint.rollback` needs an isolated worktree. A thread on the project root can only rewind the conversation (`restoreFiles: false`). | `revert --keep-files`. |
+| Setup scripts are a project setting the server runs itself. | `--run-setup-script` is gone. |
 | Bearer tokens live 30 days. No refresh grant. `t3 auth session issue --token-only` mints one from filesystem trust. A pairing token exchanges at `POST /oauth/token`. `POST /api/auth/websocket-ticket` gives a 5-minute ticket for `ws://…/ws?wsTicket=`. | Two login paths, one credentials file, the built-in `WebSocket` works without custom headers. |
-| Running servers write `<T3 home>/{userdata,dev}/server-runtime.json` with `pid`, `port`, `origin`. `GET /.well-known/t3/environment` returns `environmentId`, `serverVersion`, `orchestrationProtocolVersion`, `capabilities`. | Local discovery needs no configuration. A failed WebSocket connect reports a protocol mismatch from the descriptor. |
-| `/ws` takes `orchestrationProtocol=1`. Upstream `main` (after 0.0.45) moves to protocol 2: it rejects protocol 1 with `426`, removes HTTP dispatch, and replaces `thread.turn.start` with `message.dispatch` and `orchestration.launchThread`. | `t3c` speaks protocol 1 and needs a port before it can drive a protocol 2 server. |
-| Turn end: `thread.session-set` with `session.activeTurnId === null` after a running state. `status` ends in `ready`, `idle`, `interrupted`, `stopped`, or `error`. Approval and question requests arrive as `thread.activity-appended` with `kind` `approval.requested` or `user-input.requested`, and clear with the matching `.resolved`. | Exit codes and the `needs-input` state derive from these. `src/turn.ts` holds the pure state machine. |
-| Assistant text streams as `thread.message-sent` with `streaming: true` and cumulative text; the final `streaming: false` event carries empty text. | `watch` keeps the last streamed text per message and emits it on the final event. `wait` reads the final text from the detail snapshot. |
-| Archived threads are absent from the shell snapshot; `orchestration.getArchivedShellSnapshot` lists them. | Thread lookup falls back to the archived snapshot, so `unarchive <title>` works. |
-| Attachments: images go inline as `dataUrl`; other files need `attachments.createUploadUrl` then a `POST` of raw bytes with the file's mime type. The server enforces the limits (100 per message at 0.0.45). | `--attach` handles both. |
+| Running servers write `<T3 home>/{userdata,dev}/server-runtime.json` with `pid`, `port`, `origin`. `GET /.well-known/t3/environment` returns `environmentId`, `serverVersion`, `orchestrationProtocolVersion`, `capabilities`. | Local discovery needs no configuration. |
+| Attachments, images included, go through `attachments.createUploadUrl` then a `POST` of raw bytes. The message carries `{ type, id, name, mimeType, sizeBytes }`. | `--attach` handles both kinds the same way. |
 
 ## Connection and auth
 
@@ -102,12 +116,12 @@ Resolution order: `--env` flag, then the `default` entry, then the first entry, 
 | `t3c envs` | list stored environments |
 
 HTTP requests send `Authorization: Bearer`.
-The WebSocket mints a ticket, connects to `/ws?wsTicket=…&clientSurface=cli&orchestrationProtocol=1`, sends one `Request` per call, acks each `Chunk`, and sends `Interrupt` when a call is abandoned.
+The WebSocket mints a ticket, connects to `/ws?wsTicket=…&clientSurface=cli&orchestrationProtocol=2`, sends one `Request` per call, acks each `Chunk`, and sends `Interrupt` when a call is abandoned.
 
 ## Commands and payloads
 
 All ids are client-generated UUIDs.
-`client.dispatch` stamps `commandId` and `createdAt` (the client clock; the server overwrites it).
+`client.dispatch` stamps `commandId`; protocol 2 commands carry no `createdAt`.
 
 ### Discover
 
@@ -117,58 +131,56 @@ All ids are client-generated UUIDs.
 | `projects`, `threads [--project] [--archived]` | `GET /api/orchestration/shell`, or `orchestration.getArchivedShellSnapshot` |
 | `providers`, `models [instance] [--all]` | WS `server.getConfig` |
 | `search <query> [--limit]` | WS `orchestration.searchThreads { query, limit }` |
-| `show <thread> [--turns] [--messages-only]` | `GET /api/orchestration/threads/:id?turnLimit=` |
-| `pending <thread>` | same snapshot, filtered to unresolved approval and user-input activities |
+| `show <thread> [--messages-only]` | `GET /api/orchestration/threads/:id` |
+| `pending <thread>` | same projection: pending runtime requests with their prompt or questions |
+| `diff [--from-turn-count] [--to-turn-count] [--full]` | WS `orchestration.getTurnDiff` or `orchestration.getFullThreadDiff`; counts are run ordinals |
 
 ### Drive
 
-`new` sends one `thread.turn.start`:
+`new` makes one `orchestration.launchThread` call:
 
 ```json
 {
-  "type": "thread.turn.start",
-  "commandId": "<uuid>", "threadId": "<uuid>",
-  "message": { "messageId": "<uuid>", "role": "user", "text": "<stdin>", "attachments": [] },
+  "commandId": "<uuid>", "threadId": "<uuid>", "projectId": "…", "title": "<--title or first prompt line>",
+  "creationSource": "web", "generateTitle": true,
   "modelSelection": { "instanceId": "codex", "model": "gpt-6-astra", "options": [{ "id": "reasoningEffort", "value": "high" }] },
   "runtimeMode": "full-access", "interactionMode": "default",
-  "titleSeed": "<first prompt line, only without --title>",
-  "bootstrap": {
-    "createThread": { "projectId", "title", "modelSelection", "runtimeMode", "interactionMode", "branch": null, "worktreePath": null, "createdAt" },
-    "prepareWorktree": { "projectCwd": "<project workspaceRoot>", "baseBranch": "main", "branch": "nei/x", "startFromOrigin": true },
-    "runSetupScript": true
-  },
-  "createdAt": "…"
+  "workspaceStrategy": { "type": "worktree", "baseRef": "main", "branch": "nei/x", "startFromOrigin": true },
+  "initialMessage": { "messageId": "<uuid>", "text": "<stdin>", "attachments": [] }
 }
 ```
 
-`--no-prompt` sends a bare `thread.create` with the same `createThread` fields instead.
+Without `--prepare-worktree`, `workspaceStrategy` is `{ "type": "root" }`.
+`--no-prompt` dispatches a bare `thread.create` instead.
 
 | Command | Payload |
 | --- | --- |
-| `send <thread> [--from-plan <planId>]` | `thread.turn.start` without `bootstrap`; `modelSelection` only when model flags were given; `sourceProposedPlan: { threadId, planId }` with `--from-plan` |
-| `wait <thread> [--timeout]` | WS `orchestration.subscribeThread { threadId }`; exit 0 completed, 2 error, 3 interrupted or stopped, 4 needs input, 124 timeout |
+| `send <thread> [--from-plan <planId>]` | `message.dispatch { messageId, text, attachments, dispatchMode: { type: "start_immediately" }, createdBy, creationSource, modelSelection?, sourcePlanRef? }`, preceded by `thread.runtime-mode.set` / `thread.interaction-mode.set` when those flags change the thread |
+| `wait <thread> [--timeout]` | WS `orchestration.subscribeThread { threadId }`; exit 0 completed, 2 failed, 3 interrupted, cancelled, or rolled back, 4 needs input, 124 timeout |
 | `watch <thread> [--raw] [--from <sequence>]` | same subscription, JSONL; `afterSequence` with `--from` |
-| `interrupt <thread>` | `thread.turn.interrupt` |
-| `approve <thread> <requestId> --decision <d>` | `thread.approval.respond { requestId, decision }` |
-| `answer <thread> <requestId> --answer q=v…` | `thread.user-input.respond { requestId, answers }`; `--dismiss` sends `thread.user-input.dismiss` |
-| `close <thread>` | `thread.turn.interrupt` if running, wait for the fence, then `thread.settle`. The one composite command, because settle is rejected during a turn. |
+| `interrupt <thread> [--hold-queue]` | `run.interrupt { runId, holdQueue? }` for the current active run |
+| `approve <thread> [<requestId>] --decision <d>` | `runtime-request.respond { requestId, decision }`; the request id defaults to the only pending one |
+| `answer <thread> [<requestId>] --answer q=v…` | `runtime-request.respond { requestId, answers }`; `--dismiss` sends `thread.user-input.dismiss` |
+| `close <thread>` | `run.interrupt { holdQueue: true }` if a run is active, wait for it, then `thread.settle`. The one composite command, because settle is rejected during a run. |
 
-With `--wait`, `send` subscribes before dispatching so no event is missed; `new` replays from sequence 0 after dispatching (see "Waiting on a turn").
+`wait --json` prints `{ threadId, state, runId, lastError` or `pending, text, files, title }`.
 
 ### Change
 
 | Command | Payload |
 | --- | --- |
-| `set --title` / `--regenerate-title` / model flags / `--pull-request` | `thread.meta.update { title? , regenerateTitle?, modelSelection?, linkedPullRequest? }` |
+| `set --title` / `--regenerate-title` / `--pull-request` | `thread.metadata.update { title?, regenerateTitle?, linkedPullRequest? }` |
+| `set` model flags | `thread.model-selection.set { modelSelection }` |
 | `set --runtime-mode` | `thread.runtime-mode.set { runtimeMode }` |
 | `set --interaction-mode` | `thread.interaction-mode.set { interactionMode }` |
 | `settle`, `archive`, `unarchive`, `pin`, `unpin`, `delete --yes` | the same-named command with only `threadId` |
 | `unsettle`, `unsnooze` | `{ reason: "user" }` |
 | `snooze --until <iso\|duration>` | `thread.snooze { snoozedUntil }` |
-| `stop [--only-if-settled]` | `thread.session.stop` |
-| `revert --turn-count <n>` | `thread.checkpoint.revert { turnCount }` |
-| `diff [--from-turn-count] [--to-turn-count] [--full]` | WS `orchestration.getTurnDiff` or `orchestration.getFullThreadDiff` |
-| `project-add`, `project-set`, `project-remove` | `project.create`, `project.meta.update`, `project.delete` |
+| `stop` | `provider-session.detach` for each of the thread's provider sessions |
+| `revert --turn-count <n> [--keep-files]` | `checkpoint.rollback { scopeId, checkpointId, restoreFiles? }` for the checkpoint after run `n` (0 = before the first run) |
+| `project-add`, `project-set`, `project-remove` | WS `projects.mutate` with `project.create`, `project.update`, `project.delete` |
+
+Removed in protocol 2: `new --run-setup-script`, `show --turns`, `stop --only-if-settled`.
 
 ## Code layout
 
@@ -180,9 +192,9 @@ src/
   client.ts       T3Client: typed WebSocket RPC (call, stream, dispatch) and HTTP
   credentials.ts  credentials file, local discovery, pairing URL parsing
   model.ts        --option parsing, model selection, descriptor validation
-  turn.ts         pure turn-outcome reducer, event summaries
+  turn.ts         pure run-outcome reducer, event summaries
   resolve.ts      thread and project lookup by id, prefix, title, or path
-  attachments.ts  stdin prompt, inline images, file uploads
+  attachments.ts  stdin prompt, attachment uploads
   commands/       one file per command group
 scripts/contracts.sh  checks out upstream contracts for typecheck
 test/
@@ -192,7 +204,8 @@ skills/t3-handoff/SKILL.md
 ```
 
 The pure core is tested from fixtures without a server.
-Live behavior was verified against a scratch server started with `t3 serve --base-dir <tmp> --port <port>`, including full `new --wait` and `send --wait` turns.
+Turn fixtures are trimmed recordings of live protocol 2 streams.
+Live behavior was verified against a scratch nightly server started with `t3 serve --base-dir <tmp> --port <port>`: every command, including `new --wait`, `send --wait`, the approval flow, worktree launches, attachments, interrupt, and `close`.
 
 ## Out of scope
 

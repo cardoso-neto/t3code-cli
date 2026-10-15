@@ -3,30 +3,35 @@ import { randomUUID } from "node:crypto";
 import type {
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadDetailSnapshot,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadProjection,
   WsRpcGroup,
 } from "@t3tools/contracts";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import type { FromServerEncoded } from "effect/unstable/rpc/RpcMessage";
+import type * as DateTime from "effect/DateTime";
+import type * as Rpc from "effect/rpc/Rpc";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type { FromServerEncoded } from "effect/rpc/RpcMessage";
 import { T3Error } from "./errors.ts";
 
-// Every WebSocket method, typed from upstream's RpcGroup. Payloads are what goes on
-// the wire (Encoded); results are the decoded shapes, which for these schemas are
-// plain JSON with branded strings.
+/** The JSON form of a schema's encoded type. Effect types encoded timestamps as DateTime; on the wire they are ISO strings. */
+type Jsonify<T> = T extends DateTime.DateTime ? string : T extends object ? { [K in keyof T]: Jsonify<T[K]> } : T;
+export type Wire<S extends { readonly Encoded: unknown }> = Jsonify<S["Encoded"]>;
+
+// Every WebSocket method, typed from upstream's RpcGroup in its wire form.
 type Rpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
 export type RpcTag = Rpcs extends infer R ? (R extends { readonly _tag: infer T extends string } ? (string extends T ? never : T) : never) : never;
 type ByTag<T extends RpcTag> = Rpc.ExtractTag<Rpcs, T>;
-export type RpcInput<T extends RpcTag> = ByTag<T>["payloadSchema"]["Encoded"];
-export type RpcOutput<T extends RpcTag> = Rpc.SuccessExitSchema<ByTag<T>>["Type"];
+export type RpcInput<T extends RpcTag> = Wire<ByTag<T>["payloadSchema"]>;
+export type RpcOutput<T extends RpcTag> = Wire<Rpc.SuccessExitSchema<ByTag<T>>>;
 
 export type Command = RpcInput<"orchestration.dispatchCommand">;
-/** A command minus the `commandId` and `createdAt` that `dispatch` stamps on. */
-export type CommandFields = Command extends infer C ? (C extends Command ? Omit<C, "commandId" | "createdAt"> : never) : never;
+/** A command minus the `commandId` that `dispatch` stamps on. */
+export type CommandFields = Command extends infer C ? (C extends Command ? Omit<C, "commandId"> : never) : never;
+export type ShellSnapshot = Wire<typeof OrchestrationV2ShellSnapshot>;
+export type ThreadProjection = Wire<typeof OrchestrationV2ThreadProjection>;
 
 /** The orchestration protocol the pinned contracts speak. Bumping contracts to a new protocol fails typecheck here. */
-const PROTOCOL: typeof ORCHESTRATION_PROTOCOL_VERSION = 1;
+const PROTOCOL: typeof ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 /** One authenticated connection to a T3 Code environment. Opens a single WebSocket lazily and multiplexes requests over it. */
 export class T3Client {
@@ -40,20 +45,18 @@ export class T3Client {
     this.#token = token;
   }
 
-  shell(): Promise<OrchestrationShellSnapshot> {
-    return this.http("GET", "/api/orchestration/shell") as Promise<OrchestrationShellSnapshot>;
+  shell(): Promise<ShellSnapshot> {
+    return this.http("GET", "/api/orchestration/shell") as Promise<ShellSnapshot>;
   }
 
-  thread(threadId: string, turnLimit?: number): Promise<OrchestrationThreadDetailSnapshot> {
-    const query = turnLimit ? `?turnLimit=${turnLimit}` : "";
-    return this.http("GET", `/api/orchestration/threads/${encodeURIComponent(threadId)}${query}`) as Promise<OrchestrationThreadDetailSnapshot>;
+  async thread(threadId: string): Promise<ThreadProjection> {
+    const { projection } = (await this.http("GET", `/api/orchestration/threads/${encodeURIComponent(threadId)}`)) as { projection: ThreadProjection };
+    return projection;
   }
 
-  /** Stamps and dispatches a command over the WebSocket, the only path that runs `bootstrap`. */
   async dispatch(fields: CommandFields): Promise<{ commandId: string; sequence: number }> {
     const commandId = randomUUID();
-    const command = { ...fields, commandId, createdAt: new Date().toISOString() } as Command;
-    return { commandId, ...(await this.call("orchestration.dispatchCommand", command)) };
+    return { commandId, ...(await this.call("orchestration.dispatchCommand", { ...fields, commandId } as Command)) };
   }
 
   /** A unary method: resolves with its single result. */
@@ -133,7 +136,7 @@ export class T3Client {
 
   /** Authenticated HTTP for the few endpoints that have no WebSocket method. */
   async http(method: "GET" | "POST", path: string, body?: { json: unknown } | { bytes: Uint8Array; mimeType: string }): Promise<unknown> {
-    const headers: Record<string, string> = { authorization: `Bearer ${this.#token}` };
+    const headers: Record<string, string> = { authorization: `Bearer ${this.#token}`, "x-t3-orchestration-protocol": String(PROTOCOL) };
     let payload: string | Uint8Array | undefined;
     if (body && "json" in body) [headers["content-type"], payload] = ["application/json", JSON.stringify(body.json)];
     if (body && "bytes" in body) [headers["content-type"], payload] = [body.mimeType, body.bytes];

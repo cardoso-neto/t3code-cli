@@ -17,10 +17,10 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "effect": "4.0.0-rc.115",
+    "effect": "4.0.4",
     "typescript": "^5.9.2"
   },
   "config": {
-    "t3code": "v0.0.45"
+    "t3code": "v0.0.46-nightly.20261014.3132"
   }
 }

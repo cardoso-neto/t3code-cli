@@ -1,0 +1,16 @@
+{
+  "target": {
+    "current": true
+  },
+  "items": [
+    {
+      "kind": "snapshot",
+      "snapshotSequence": 21,
+      "projection": {
+        "runs": [],
+        "runtimeRequests": [],
+        "turnItems": []
+      }
+    }
+  ]
+}

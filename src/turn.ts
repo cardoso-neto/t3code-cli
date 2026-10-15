@@ -1,142 +1,152 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationSession,
-  OrchestrationThread,
-  OrchestrationThreadActivity,
-  OrchestrationThreadStreamItem,
-} from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent, OrchestrationV2Run, OrchestrationV2RuntimeRequest, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { RpcOutput, ThreadProjection, Wire } from "./client.ts";
+
+export type Run = Wire<typeof OrchestrationV2Run>;
+export type RuntimeRequest = Wire<typeof OrchestrationV2RuntimeRequest>;
+export type TurnItem = Wire<typeof OrchestrationV2TurnItem>;
+/**
+ * Upstream's wire union also admits events and turn items of types this client does not know,
+ * typed `{ type: string }`, which defeats narrowing. Type the known arms; unknown ones still
+ * arrive at runtime and fall through every `type` check.
+ */
+export type StreamItem = Exclude<RpcOutput<"orchestration.subscribeThread">, { kind: "event" }> | { kind: "event"; sequence: number; event: Wire<typeof OrchestrationV2DomainEvent> };
+type TerminalStatus = Extract<Run["status"], "completed" | "failed" | "interrupted" | "cancelled" | "rolled_back">;
 
 export type TurnOutcome =
-  | { state: "completed" | "error" | "interrupted" | "stopped"; turnId: string | null; lastError: string | null }
-  | { state: "needs-input"; turnId: string | null; pending: OrchestrationThreadActivity[] };
+  | { state: TerminalStatus; runId: string | null; lastError: string | null }
+  | { state: "needs-input"; runId: string; pending: RuntimeRequest[] };
 
 export const EXIT_CODE_BY_OUTCOME: Record<TurnOutcome["state"], number> = {
   completed: 0,
-  error: 2,
+  failed: 2,
   interrupted: 3,
-  stopped: 3,
+  cancelled: 3,
+  rolled_back: 3,
   "needs-input": 4,
 };
 
-/**
- * Which turn to wait on, which decides how to read the stream's opening snapshot.
- * - current: the thread's turn right now; an idle thread has already settled.
- * - next: a turn dispatched after the snapshot was taken, so the snapshot's turn is an older one.
- * - first: the first turn of a thread created by the dispatch; the snapshot may come before or after the turn starts.
- */
-export type Awaiting = "current" | "next" | "first";
+const TERMINAL: ReadonlySet<Run["status"]> = new Set<TerminalStatus>(["completed", "failed", "interrupted", "cancelled", "rolled_back"]);
+export const isActive = (run: Run): boolean => !TERMINAL.has(run.status);
 
-/** What a thread stream has shown so far about the turn being waited on. */
+/**
+ * The run to wait on: the one the message we sent starts, or whatever run the thread is on
+ * when the first snapshot arrives. Restart continuations stand in for the run they continue.
+ */
+export type Target = { messageId: string } | { current: true };
+
+/** What a thread stream has shown so far, keyed by id. */
 export type TurnState = {
-  awaiting: Awaiting;
-  sawRunning: boolean;
-  session: OrchestrationSession | null;
-  pending: OrchestrationThreadActivity[];
-  outcome: TurnOutcome | null;
+  target: Target;
+  runs: Record<string, Run>;
+  requests: Record<string, RuntimeRequest>;
+  errors: Record<string, string>;
+  /** Resolved from `{ current: true }` at the first snapshot; null for a thread that never ran. */
+  currentRunId?: string | null;
+  deleted: boolean;
 };
 
-export const initialTurnState = (awaiting: Awaiting): TurnState => ({ awaiting, sawRunning: false, session: null, pending: [], outcome: null });
+export const initialTurnState = (target: Target): TurnState => ({ target, runs: {}, requests: {}, errors: {}, deleted: false });
 
-export function isRunning(thread: Pick<OrchestrationThread, "session" | "latestTurn">): boolean {
-  return thread.session?.status === "running" || thread.session?.status === "starting" || thread.latestTurn?.state === "running";
-}
-
-/** Open approval and user-input requests: requested activities without a matching resolved one. */
-export function pendingRequests(activities: readonly OrchestrationThreadActivity[]): OrchestrationThreadActivity[] {
-  return activities.reduce(applyActivity, []);
-}
-
-export function requestId(activity: OrchestrationThreadActivity): string | undefined {
-  const payload = activity.payload as { requestId?: unknown } | null;
-  return typeof payload?.requestId === "string" ? payload.requestId : undefined;
-}
-
-function applyActivity(pending: OrchestrationThreadActivity[], activity: OrchestrationThreadActivity): OrchestrationThreadActivity[] {
-  const id = requestId(activity);
-  if (!id) return pending;
-  const others = pending.filter((open) => requestId(open) !== id);
-  if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") return [...others, activity];
-  if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") return others;
-  return pending;
-}
-
-function needsInput(state: TurnState): TurnState {
-  return state.pending.length > 0 ? { ...state, outcome: { state: "needs-input", turnId: state.session?.activeTurnId ?? null, pending: state.pending } } : state;
-}
-
-/**
- * Folds one stream item into the state. `outcome` is set once the turn has settled or needs input.
- * A plain subscription opens with a snapshot; one with `afterSequence` replays events instead.
- */
-export function step(state: TurnState, item: OrchestrationThreadStreamItem): TurnState {
+export function step(state: TurnState, item: StreamItem): TurnState {
   if (item.kind === "snapshot") {
-    const { thread } = item.snapshot;
-    const running = isRunning(thread);
-    const next = needsInput({ ...state, session: thread.session, pending: pendingRequests(thread.activities), sawRunning: state.sawRunning || (running && state.awaiting !== "next") });
-    if (next.outcome || running || state.awaiting === "next") return next;
-    const latest = thread.latestTurn;
-    if (!latest && state.awaiting === "first") return next;
-    // Idle: report how the latest turn ended, or "completed" for a thread that never ran one.
-    const settled = (latest?.state ?? "completed") as "completed" | "error" | "interrupted";
-    return { ...next, outcome: { state: settled, turnId: latest?.turnId ?? null, lastError: thread.session?.lastError ?? null } };
+    const { projection } = item;
+    const next = { ...state, runs: byId(projection.runs), requests: byId(projection.runtimeRequests), errors: errorsByRun(projection.turnItems as readonly TurnItem[]) };
+    return "current" in state.target && state.currentRunId === undefined ? { ...next, currentRunId: currentRun(projection.runs)?.id ?? null } : next;
   }
-  return item.kind === "event" ? applyEvent(state, item.event) : state;
+  if (item.kind !== "event") return state;
+  const { event } = item;
+  switch (event.type) {
+    case "run.created":
+    case "run.updated":
+      return { ...state, runs: { ...state.runs, [event.payload.id]: event.payload } };
+    case "runtime-request.updated":
+      return { ...state, requests: { ...state.requests, [event.payload.id]: event.payload } };
+    case "turn-item.updated":
+      return { ...state, errors: { ...state.errors, ...errorsByRun([event.payload]) } };
+    case "thread.deleted":
+      return { ...state, deleted: true };
+    default:
+      return state;
+  }
 }
 
-function applyEvent(state: TurnState, event: OrchestrationEvent): TurnState {
-  if (event.type === "thread.deleted") return { ...state, outcome: { state: "error", turnId: state.session?.activeTurnId ?? null, lastError: "thread was deleted" } };
-  if (event.type === "thread.activity-appended") return needsInput({ ...state, pending: applyActivity(state.pending, event.payload.activity) });
-  if (event.type !== "thread.session-set") return state;
-  const { session } = event.payload;
-  const next = { ...state, session };
-  if (session.status === "running" || session.status === "starting" || session.activeTurnId) return { ...next, sawRunning: true };
-  // An error before the turn ran is a failed start, e.g. worktree preparation.
-  if (!state.sawRunning && session.status !== "error") return next;
-  const outcome = session.status === "error" || session.status === "interrupted" || session.status === "stopped" ? session.status : "completed";
-  return { ...next, outcome: { state: outcome, turnId: state.session?.activeTurnId ?? null, lastError: session.lastError } };
+/** The settled outcome, or null while the awaited run is still going. */
+export function outcome(state: TurnState): TurnOutcome | null {
+  const run = trackedRun(state);
+  if (state.deleted) return { state: "failed", runId: run?.id ?? null, lastError: "thread was deleted" };
+  if (!run) return "current" in state.target && state.currentRunId === null ? { state: "completed", runId: null, lastError: null } : null;
+  if (!isActive(run)) return { state: run.status as TerminalStatus, runId: run.id, lastError: state.errors[run.id] ?? null };
+  const pending = Object.values(state.requests).filter((request) => request.status === "pending");
+  return pending.length > 0 ? { state: "needs-input", runId: run.id, pending } : null;
 }
 
-/** Consumes a thread stream until the awaited turn settles. Returns null if the stream ends first (timeout or abort). */
-export async function waitForTurn(items: AsyncIterable<OrchestrationThreadStreamItem>, awaiting: Awaiting): Promise<TurnOutcome | null> {
-  let state = initialTurnState(awaiting);
+function trackedRun(state: TurnState): Run | undefined {
+  const runs = Object.values(state.runs);
+  const { target } = state;
+  let run = "messageId" in target ? runs.find((candidate) => candidate.userMessageId === target.messageId) : state.currentRunId ? state.runs[state.currentRunId] : undefined;
+  for (let next = run; next; next = runs.find((candidate) => candidate.restartContinuationOfRunId === run!.id)) run = next;
+  return run;
+}
+
+/** The active run with the highest ordinal, else the latest run. */
+export function currentRun(runs: readonly Run[]): Run | undefined {
+  const latestFirst = [...runs].sort((a, b) => b.ordinal - a.ordinal);
+  return latestFirst.find(isActive) ?? latestFirst[0];
+}
+
+function byId<T extends { id: string }>(items: readonly T[]): Record<string, T> {
+  return Object.fromEntries(items.map((item) => [item.id, item]));
+}
+
+function errorsByRun(items: readonly TurnItem[]): Record<string, string> {
+  return Object.fromEntries(items.flatMap((item) => (item.type === "error" && item.runId ? [[item.runId, item.failure.message]] : [])));
+}
+
+/** Consumes a thread stream until the awaited run settles. Returns null if the stream ends first (timeout or abort). */
+export async function waitForTurn(items: AsyncIterable<RpcOutput<"orchestration.subscribeThread">>, target: Target): Promise<TurnOutcome | null> {
+  let state = initialTurnState(target);
   for await (const item of items) {
-    state = step(state, item);
-    if (state.outcome) return state.outcome;
+    state = step(state, item as StreamItem);
+    const settled = outcome(state);
+    if (settled) return settled;
   }
   return null;
 }
 
-export function finalAssistantText(thread: Pick<OrchestrationThread, "messages">, turnId: string | null): string {
-  const assistant = thread.messages.filter((message) => message.role === "assistant");
-  const ofTurn = turnId ? assistant.filter((message) => message.turnId === turnId) : [];
-  return (ofTurn.length > 0 ? ofTurn : assistant).at(-1)?.text ?? "";
+export function finalAssistantText(projection: Pick<ThreadProjection, "messages">, runId: string | null): string {
+  const assistant = projection.messages.filter((message) => message.role === "assistant");
+  const ofRun = runId ? assistant.filter((message) => message.runId === runId) : [];
+  return (ofRun.length > 0 ? ofRun : assistant).at(-1)?.text ?? "";
 }
 
-/** Compact view of the events `watch` shows by default. Streamed assistant text is cumulative; `streaming` keeps the latest per message until the final event. */
-export function summarizeEvent(event: OrchestrationEvent, streaming: Map<string, string>): Record<string, unknown> | null {
+/** Open requests joined with the turn item that carries their prompt or questions. */
+export function pendingRequests(projection: Pick<ThreadProjection, "runtimeRequests" | "turnItems">): { request: RuntimeRequest; item: TurnItem | undefined }[] {
+  return projection.runtimeRequests
+    .filter((request) => request.status === "pending")
+    .map((request) => ({ request, item: (projection.turnItems as readonly TurnItem[]).find((item) => "requestId" in item && item.requestId === request.id) }));
+}
+
+/** Compact view of the events `watch` shows by default. */
+export function summarizeEvent(item: Extract<StreamItem, { kind: "event" }>): Record<string, unknown> | null {
+  const { event } = item;
   switch (event.type) {
-    case "thread.message-sent": {
-      const { messageId, role, text, turnId } = event.payload;
-      if (event.payload.streaming) {
-        streaming.set(messageId, text);
-        return null;
-      }
-      const final = text || streaming.get(messageId) || "";
-      streaming.delete(messageId);
-      return { type: "message", role, text: final, turnId, messageId };
+    case "run.created":
+    case "run.updated":
+      return { type: "run", runId: event.payload.id, ordinal: event.payload.ordinal, status: event.payload.status };
+    case "message.updated":
+      return event.payload.streaming || !event.payload.text ? null : { type: "message", role: event.payload.role, text: event.payload.text, runId: event.payload.runId, messageId: event.payload.id };
+    case "runtime-request.updated":
+      return { type: "request", requestId: event.payload.id, kind: event.payload.kind, status: event.payload.status };
+    case "turn-item.updated": {
+      const turnItem = event.payload;
+      if (turnItem.type === "error") return { type: "error", runId: turnItem.runId, message: turnItem.failure.message, code: turnItem.failure.code };
+      if (turnItem.type === "proposed_plan" && !turnItem.streaming) return { type: "plan", planId: turnItem.planId, markdown: turnItem.markdown };
+      return null;
     }
-    case "thread.activity-appended": {
-      const { activity } = event.payload;
-      return { type: "activity", kind: activity.kind, tone: activity.tone, summary: activity.summary, turnId: activity.turnId, requestId: requestId(activity) };
-    }
-    case "thread.session-set": {
-      const { session } = event.payload;
-      return { type: "session", status: session.status, activeTurnId: session.activeTurnId, lastError: session.lastError };
-    }
-    case "thread.turn-diff-completed":
-      return { type: "diff", turnId: event.payload.turnId, status: event.payload.status, files: event.payload.files.length };
-    case "thread.proposed-plan-upserted":
-      return { type: "plan", planId: event.payload.proposedPlan.id, markdown: event.payload.proposedPlan.planMarkdown };
+    case "checkpoint.captured":
+      return { type: "checkpoint", runId: event.payload.runId, files: event.payload.files.length };
+    case "thread.deleted":
+      return { type: "deleted" };
     default:
       return null;
   }

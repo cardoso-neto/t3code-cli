@@ -23,8 +23,9 @@ Prompts come from stdin.
 Every command takes `--json`.
 `t3c --help` lists the rest.
 
-`wait` exits 0 on completion, 2 on error, 3 if interrupted, 4 when the thread needs an approval or answer, 124 on timeout.
+`wait` exits 0 on completion, 2 on failure, 3 if interrupted, cancelled, or rolled back, 4 when the thread needs an approval or answer, 124 on timeout.
 
-Built against T3 Code 0.0.45 (orchestration protocol 1).
+This branch speaks orchestration protocol 2, the protocol on T3 Code's `main` after 0.0.45, and is built against nightly `v0.0.46-nightly.20261014.3132`.
+For 0.0.45 servers (protocol 1), use `master`.
 [DESIGN.md](DESIGN.md) maps each command to the payload it sends.
 `skills/t3-handoff` teaches an agent to delegate work through `t3c`.

@@ -1,8 +1,0 @@
-{
-  "outcome": {
-    "state": "error",
-    "turnId": null,
-    "lastError": "thread was deleted"
-  },
-  "settledAt": 2
-}

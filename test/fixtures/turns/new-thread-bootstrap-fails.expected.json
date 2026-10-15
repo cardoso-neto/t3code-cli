@@ -1,8 +1,0 @@
-{
-  "outcome": {
-    "state": "error",
-    "turnId": null,
-    "lastError": "Worktree setup failed."
-  },
-  "settledAt": 1
-}

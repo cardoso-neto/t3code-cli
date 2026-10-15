@@ -1,0 +1,27 @@
+{
+  "outcome": {
+    "state": "needs-input",
+    "runId": "run:thread:9b4be167-be79-468a-bf44-f760e9051825:ordinal:1",
+    "pending": [
+      {
+        "id": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a13d4b-49ba-7fe3-b907-41850557ceda:native-request:exec-82386b72-525a-43ef-9060-8d1ed82246f1:ecff357c-3de0-4b10-8d95-ffde9e5a05d5",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a13d4b-49ba-7fe3-b907-41850557ceda%3Anative-request%3Aexec-82386b72-525a-43ef-9060-8d1ed82246f1%3Aecff357c-3de0-4b10-8d95-ffde9e5a05d5",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a13d4b-49ba-7fe3-b907-41850557ceda",
+        "nativeRequestRef": {
+          "driver": "codex",
+          "nativeId": "exec-82386b72-525a-43ef-9060-8d1ed82246f1",
+          "strength": "strong"
+        },
+        "kind": "command",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session:provider-instance:codex:shared"
+        },
+        "createdAt": "2026-10-15T02:01:50.935Z",
+        "resolvedAt": null
+      }
+    ]
+  },
+  "settledAt": 2
+}

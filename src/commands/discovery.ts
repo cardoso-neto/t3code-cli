@@ -1,9 +1,8 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import { fetchEnvironment } from "../client.ts";
 import { boolFlag, intFlag, positional, shortId, stringFlag, table, type Command } from "../cli.ts";
 import { describeOptions } from "../model.ts";
-import { lookupThread, resolveProject } from "../resolve.ts";
-import { pendingRequests, requestId } from "../turn.ts";
+import { lookupThread, resolveProject, type ThreadShell } from "../resolve.ts";
+import { currentRun, pendingRequests, type TurnItem } from "../turn.ts";
 
 export const env: Command = {
   name: "env",
@@ -45,14 +44,14 @@ export const threads: Command = {
     const projectFilter = stringFlag(args, "project");
     const projectId = projectFilter ? resolveProject(shell, projectFilter).id : undefined;
     const rows = listed.filter((thread) => !projectId || thread.projectId === projectId);
-    print(rows, () => table(rows.map(threadRow), ["id", "title", "model", "session", "turn", "flags", "updatedAt"]));
+    print(rows, () => table(rows.map(threadRow), ["id", "title", "model", "status", "flags", "updatedAt"]));
   },
 };
 
-function threadRow(thread: OrchestrationThreadShell) {
+function threadRow(thread: ThreadShell) {
+  const pendingKind = thread.pendingRuntimeRequest?.kind;
   const flags = [
-    thread.hasPendingApprovals && "approval",
-    thread.hasPendingUserInput && "input",
+    pendingKind && (pendingKind === "user_input" ? "input" : "approval"),
     thread.hasActionableProposedPlan && "plan",
     thread.settledAt && "settled",
     thread.snoozedUntil && "snoozed",
@@ -63,8 +62,7 @@ function threadRow(thread: OrchestrationThreadShell) {
     id: thread.id,
     title: thread.title,
     model: `${thread.modelSelection.instanceId}/${thread.modelSelection.model}`,
-    session: thread.session?.status,
-    turn: thread.latestTurn?.state,
+    status: thread.status,
     flags: flags.join(",") || null,
     updatedAt: thread.updatedAt,
   };
@@ -120,20 +118,18 @@ export const search: Command = {
 
 export const show: Command = {
   name: "show",
-  summary: "Show a thread: metadata, messages, pending requests, plans, and checkpoints.",
-  usage: "show <thread> [--turns <n>] [--messages-only]",
-  flags: {
-    turns: { type: "string", value: "n", help: "only the last n turns" },
-    "messages-only": { type: "boolean", help: "print just the conversation" },
-  },
+  summary: "Show a thread: metadata, runs, messages, pending requests, plans, and checkpoints.",
+  usage: "show <thread> [--messages-only]",
+  flags: { "messages-only": { type: "boolean", help: "print just the conversation" } },
   async run({ client: connect, args, print }) {
     const client = await connect();
     const { id } = await lookupThread(client, positional(args, 0, "thread"));
-    const { thread } = await client.thread(id, intFlag(args, "turns"));
-    const pending = pendingRequests(thread.activities);
-    print(thread, () => {
-      const conversation = thread.messages.map((message) => `--- ${message.role} (${message.createdAt})\n${message.text}`).join("\n\n");
+    const projection = await client.thread(id);
+    const { thread } = projection;
+    print(projection, () => {
+      const conversation = projection.messages.map((message) => `--- ${message.role} (${message.createdAt})\n${message.text}`).join("\n\n");
       if (boolFlag(args, "messages-only")) return conversation;
+      const run = currentRun(projection.runs);
       const header = [
         `${thread.title}  [${shortId(thread.id)}]`,
         `  id: ${thread.id}`,
@@ -141,11 +137,10 @@ export const show: Command = {
         `  model: ${thread.modelSelection.instanceId}/${thread.modelSelection.model} ${JSON.stringify(thread.modelSelection.options ?? [])}`,
         `  modes: ${thread.runtimeMode}, ${thread.interactionMode}`,
         `  workspace: ${thread.worktreePath ?? "(project root)"}${thread.branch ? ` @ ${thread.branch}` : ""}`,
-        `  session: ${thread.session?.status ?? "-"}${thread.session?.lastError ? ` (${thread.session.lastError})` : ""}`,
-        `  latest turn: ${thread.latestTurn?.state ?? "-"}`,
-        `  pending: ${pending.map((activity) => `${activity.kind} ${requestId(activity)}`).join(", ") || "none"}`,
-        `  plans: ${thread.proposedPlans.map((plan) => `${plan.id}${plan.implementedAt ? " (implemented)" : ""}`).join(", ") || "none"}`,
-        `  checkpoints: ${thread.checkpoints.length}`,
+        `  runs: ${projection.runs.length}${run ? `, latest #${run.ordinal} ${run.status}` : ""}`,
+        `  pending: ${pendingRequests(projection).map(({ request }) => `${request.kind} ${request.id}`).join(", ") || "none"}`,
+        `  plans: ${projection.plans.filter((plan) => plan.kind === "proposed_plan").map((plan) => plan.id).join(", ") || "none"}`,
+        `  checkpoints: ${projection.checkpoints.length}`,
       ];
       return `${header.join("\n")}\n\n${conversation}`;
     });
@@ -154,30 +149,36 @@ export const show: Command = {
 
 export const pending: Command = {
   name: "pending",
-  summary: "List open approval and user-input requests on a thread. Each carries the requestId that approve and answer need.",
+  summary: "List open approval and user-input requests on a thread, each with the turn item that holds its prompt or questions. The request id is what approve and answer need.",
   usage: "pending <thread>",
   async run({ client: connect, args, print }) {
     const client = await connect();
     const { id } = await lookupThread(client, positional(args, 0, "thread"));
-    const requests = pendingRequests((await client.thread(id)).thread.activities);
-    print(requests, () => requests.map((activity) => `${activity.kind}  ${requestId(activity)}\n  ${activity.summary}\n  ${JSON.stringify(activity.payload)}`).join("\n") || "(none)");
+    const requests = pendingRequests(await client.thread(id));
+    print(requests, () => requests.map(({ request, item }) => `${request.kind}  ${request.id}\n  ${describeRequest(item)}`).join("\n") || "(none)");
   },
 };
 
+function describeRequest(item: TurnItem | undefined): string {
+  if (item?.type === "approval_request") return item.prompt ?? item.requestKind;
+  if (item?.type === "user_input_request") return item.questions.map((question) => JSON.stringify(question)).join("\n  ");
+  return "(no details)";
+}
+
 export const diff: Command = {
   name: "diff",
-  summary: "Print the unified diff for a turn range, or the whole thread with --full.",
+  summary: "Print the unified diff for a run range, or the whole thread with --full. Turn counts are run ordinals.",
   usage: "diff <thread> [--from-turn-count <n>] [--to-turn-count <n>] [--full] [--ignore-whitespace]",
   flags: {
-    "from-turn-count": { type: "string", value: "n", help: "start of the turn range (default: --to-turn-count - 1)" },
-    "to-turn-count": { type: "string", value: "n", help: "end of the turn range (default: last checkpoint)" },
+    "from-turn-count": { type: "string", value: "n", help: "start of the range (default: --to-turn-count - 1)" },
+    "to-turn-count": { type: "string", value: "n", help: "end of the range (default: last checkpointed run)" },
     full: { type: "boolean", help: "diff from the start of the thread to --to-turn-count" },
     "ignore-whitespace": { type: "boolean", help: "ignore whitespace changes" },
   },
   async run({ client: connect, args, print }) {
     const client = await connect();
     const { id: threadId } = await lookupThread(client, positional(args, 0, "thread"));
-    const toTurnCount = intFlag(args, "to-turn-count") ?? (await client.thread(threadId)).thread.checkpoints.at(-1)?.checkpointTurnCount ?? 0;
+    const toTurnCount = intFlag(args, "to-turn-count") ?? Math.max(0, ...(await client.thread(threadId)).checkpoints.map((checkpoint) => checkpoint.appRunOrdinal ?? 0));
     const ignoreWhitespace = boolFlag(args, "ignore-whitespace");
     const result = boolFlag(args, "full")
       ? await client.call("orchestration.getFullThreadDiff", { threadId, toTurnCount, ignoreWhitespace })

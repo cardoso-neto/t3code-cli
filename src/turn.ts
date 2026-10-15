@@ -138,13 +138,13 @@ export function finalAssistantText(thread: Pick<OrchestrationThread, "messages">
   return (ofTurn.length > 0 ? ofTurn : assistant).at(-1)?.text ?? "";
 }
 
-/** Compact view of the events `watch` shows by default. Streamed assistant text is cumulative; `streaming` keeps the latest per message until the final event. */
+/** Compact view of the events `watch` shows by default. Streamed assistant text arrives as deltas; `streaming` accumulates them per message until the final event. */
 export function summarizeEvent(event: OrchestrationEvent, streaming: Map<string, string>): Record<string, unknown> | null {
   switch (event.type) {
     case "thread.message-sent": {
       const { messageId, role, text, turnId } = event.payload;
       if (event.payload.streaming) {
-        streaming.set(messageId, text);
+        streaming.set(messageId, (streaming.get(messageId) ?? "") + text);
         return null;
       }
       const final = text || streaming.get(messageId) || "";

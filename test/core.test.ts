@@ -123,12 +123,12 @@ test("isAssistantTextFinal waits only on the turn's streaming assistant messages
   assert.equal(isAssistantTextFinal({ messages }, "t2"), false);
 });
 
-test("summarizeEvent buffers streamed text until the final message", () => {
+test("summarizeEvent joins streamed deltas until the final message", () => {
   const message = (text: string, streaming: boolean) =>
     ({ type: "thread.message-sent", payload: { messageId: "m1", role: "assistant", text, turnId: "t1", streaming } }) as OrchestrationEvent;
   const streaming = new Map<string, string>();
   assert.equal(summarizeEvent(message("Hel", true), streaming), null);
-  assert.equal(summarizeEvent(message("Hello", true), streaming), null);
+  assert.equal(summarizeEvent(message("lo", true), streaming), null);
   assert.deepEqual(summarizeEvent(message("", false), streaming), { type: "message", role: "assistant", text: "Hello", turnId: "t1", messageId: "m1" });
   assert.equal(streaming.size, 0);
 });

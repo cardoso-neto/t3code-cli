@@ -1,5 +1,7 @@
 import { parseArgs, type ParseArgsConfig } from "node:util";
-import { T3Client, T3Error } from "./client.ts";
+import type { ProviderApprovalDecision, ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import { T3Client } from "./client.ts";
+import { T3Error, UsageError } from "./errors.ts";
 import { credentialsPath, discoverLocalServer, loadCredentials, selectEnvironment } from "./credentials.ts";
 
 export type FlagSpec = { type: "string" | "boolean"; multiple?: boolean; help: string; value?: string };
@@ -11,7 +13,8 @@ export type ParsedArgs = {
 };
 
 export type Context = {
-  client: T3Client;
+  /** Connects on first use, so commands that never talk to a server need no credentials. */
+  client: () => Promise<T3Client>;
   json: boolean;
   args: ParsedArgs;
   print: (json: unknown, text: () => string) => void;
@@ -23,10 +26,16 @@ export type Command = {
   summary: string;
   usage: string;
   flags?: Flags;
-  needsClient?: false;
   examples?: string[];
   run: (context: Context) => Promise<number | void>;
 };
+
+/** The members of an upstream string union, as a runtime list. `Record` makes the compiler check it is complete. */
+const literals = <T extends string>(members: Record<T, true>): readonly T[] => Object.keys(members) as T[];
+
+export const RUNTIME_MODES = literals<RuntimeMode>({ "approval-required": true, "auto-accept-edits": true, auto: true, "full-access": true });
+export const INTERACTION_MODES = literals<ProviderInteractionMode>({ default: true, plan: true });
+export const APPROVAL_DECISIONS = literals<ProviderApprovalDecision>({ accept: true, acceptForSession: true, acceptAlways: true, decline: true, cancel: true });
 
 export const GLOBAL_FLAGS: Flags = {
   env: { type: "string", help: "stored environment id, label, or origin (default: the default entry, then local discovery)" },
@@ -44,7 +53,7 @@ export function parseCommandArgs(argv: string[], flags: Flags): ParsedArgs {
     const parsed = parseArgs({ args: argv, options, allowPositionals: true, strict: true });
     return { values: parsed.values as ParsedArgs["values"], positionals: parsed.positionals };
   } catch (error) {
-    throw new T3Error((error as Error).message, 64);
+    throw new UsageError((error as Error).message);
   }
 }
 
@@ -55,7 +64,7 @@ export function stringFlag(args: ParsedArgs, name: string): string | undefined {
 
 export function requireFlag(args: ParsedArgs, name: string): string {
   const value = stringFlag(args, name);
-  if (!value) throw new T3Error(`--${name} is required`, 64);
+  if (!value) throw new UsageError(`--${name} is required`);
   return value;
 }
 
@@ -70,7 +79,7 @@ export function listFlag(args: ParsedArgs, name: string): string[] {
 
 export function positional(args: ParsedArgs, index: number, label: string): string {
   const value = args.positionals[index];
-  if (!value) throw new T3Error(`missing <${label}>`, 64);
+  if (!value) throw new UsageError(`missing <${label}>`);
   return value;
 }
 
@@ -79,7 +88,7 @@ export function enumFlag<T extends string>(args: ParsedArgs, name: string, allow
 export function enumFlag<T extends string>(args: ParsedArgs, name: string, allowed: readonly T[], fallback?: T): T | undefined {
   const value = stringFlag(args, name);
   if (value === undefined) return fallback;
-  if (!allowed.includes(value as T)) throw new T3Error(`--${name} must be one of ${allowed.join(", ")}`, 64);
+  if (!allowed.includes(value as T)) throw new UsageError(`--${name} must be one of ${allowed.join(", ")}`);
   return value as T;
 }
 
@@ -109,9 +118,9 @@ export function formatHelp(command: Command): string {
   return lines.join("\n");
 }
 
-export function table(rows: Record<string, unknown>[], columns: string[]): string {
+export function table(rows: readonly object[], columns: string[]): string {
   if (rows.length === 0) return "(none)";
-  const cells = rows.map((row) => columns.map((column) => formatCell(row[column])));
+  const cells = rows.map((row) => columns.map((column) => formatCell((row as Record<string, unknown>)[column])));
   const widths = columns.map((column, index) => Math.max(column.length, ...cells.map((row) => row[index]!.length)));
   const line = (values: string[]) => values.map((value, index) => value.padEnd(widths[index]!)).join("  ").trimEnd();
   return [line(columns), ...cells.map(line)].join("\n");
@@ -125,4 +134,24 @@ function formatCell(value: unknown): string {
 
 export function shortId(id: string): string {
   return id.slice(0, 8);
+}
+
+export function parseDuration(input: string): number {
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/.exec(input.trim());
+  if (!match) throw new UsageError(`invalid duration "${input}"; use e.g. 90s, 30m, 2h`);
+  const factor = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] ?? "s"]!;
+  return Number(match[1]) * factor;
+}
+
+/** Aborts after the --timeout duration, if one was given. */
+export function timeoutSignal(args: ParsedArgs, fallback?: string): AbortSignal | undefined {
+  const timeout = stringFlag(args, "timeout") ?? fallback;
+  return timeout ? AbortSignal.timeout(parseDuration(timeout)) : undefined;
+}
+
+export function intFlag(args: ParsedArgs, name: string): number | undefined {
+  const value = stringFlag(args, name);
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value)) throw new UsageError(`--${name} must be a non-negative integer`);
+  return Number(value);
 }

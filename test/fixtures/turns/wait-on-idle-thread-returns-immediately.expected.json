@@ -1,8 +1,8 @@
 {
   "outcome": {
     "state": "completed",
-    "turnId": null,
+    "turnId": "turn-0",
     "lastError": null
   },
-  "settledAtEvent": null
+  "settledAt": 0
 }

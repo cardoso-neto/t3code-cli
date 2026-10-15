@@ -1,8 +1,9 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { T3Error, fetchEnvironment } from "./client.ts";
-import type { EnvironmentDescriptor, ServerRuntimeState } from "./contracts.ts";
+import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { fetchEnvironment } from "./client.ts";
+import { T3Error, UsageError } from "./errors.ts";
 
 export type StoredEnvironment = {
   label: string;
@@ -50,7 +51,10 @@ export function candidateStateDirs(baseDir?: string): string[] {
   return bases.flatMap((base) => [join(base, "userdata"), join(base, "dev")]);
 }
 
-export type DiscoveredServer = { stateDir: string; runtime: ServerRuntimeState; environment: EnvironmentDescriptor };
+/** The fields we read from `<T3 home>/{userdata,dev}/server-runtime.json`, which the server writes (apps/server/src/serverRuntimeState.ts). */
+type ServerRuntimeState = { pid: number; origin: string };
+
+export type DiscoveredServer = { stateDir: string; runtime: ServerRuntimeState; environment: ExecutionEnvironmentDescriptor };
 
 export async function discoverLocalServer(baseDir?: string): Promise<DiscoveredServer> {
   const checked: string[] = [];
@@ -88,6 +92,6 @@ function isProcessAlive(pid: number): boolean {
 export function pairingTokenFromUrl(input: string): { origin: string; token: string } {
   const url = new URL(input);
   const token = new URLSearchParams(url.hash.replace(/^#/, "")).get("token") ?? url.searchParams.get("token");
-  if (!token) throw new T3Error("pairing URL has no token; expected …/pair#token=XXXX");
+  if (!token) throw new UsageError("pairing URL has no token; expected …/pair#token=XXXX");
   return { origin: url.origin, token };
 }

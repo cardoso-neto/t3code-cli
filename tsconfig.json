@@ -11,10 +11,9 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "skipLibCheck": true
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": { "@t3tools/contracts": ["./vendor/t3code/packages/contracts/src/index.ts"] }
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

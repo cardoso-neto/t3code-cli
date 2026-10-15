@@ -1,0 +1,37 @@
+{
+  "awaiting": "current",
+  "items": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "snapshotSequence": 0,
+        "thread": {
+          "id": "t",
+          "projectId": "p",
+          "title": "T",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "m"
+          },
+          "runtimeMode": "full-access",
+          "interactionMode": "default",
+          "branch": null,
+          "worktreePath": null,
+          "latestTurn": null,
+          "session": null,
+          "createdAt": "x",
+          "updatedAt": "x",
+          "archivedAt": null,
+          "settledAt": null,
+          "hasPendingApprovals": false,
+          "hasPendingUserInput": false,
+          "hasActionableProposedPlan": false,
+          "messages": [],
+          "proposedPlans": [],
+          "activities": [],
+          "checkpoints": []
+        }
+      }
+    }
+  ]
+}

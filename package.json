@@ -3,17 +3,24 @@
   "version": "0.1.0",
   "description": "Create and drive T3 Code threads from the command line",
   "type": "module",
-  "bin": { "t3c": "./dist/bin.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=22.16" },
+  "bin": {
+    "t3c": "./src/bin.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --experimental-strip-types --disable-warning=ExperimentalWarning test/*.test.ts",
-    "t3c": "node --experimental-strip-types src/bin.ts"
+    "prepare": "sh scripts/contracts.sh",
+    "typecheck": "sh scripts/contracts.sh && tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "t3c": "node src/bin.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "effect": "4.0.0-rc.115",
     "typescript": "^5.9.2"
+  },
+  "config": {
+    "t3code": "v0.0.45"
   }
 }

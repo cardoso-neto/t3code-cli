@@ -1,10 +1,14 @@
-import type { Activity, LatestTurnState, OrchestrationEvent, Session, SessionStatus, ThreadDetail } from "./contracts.ts";
-
-export type PendingRequest = { kind: "approval" | "user-input"; requestId: string; summary: string; payload: unknown; turnId: string | null };
+import type {
+  OrchestrationEvent,
+  OrchestrationSession,
+  OrchestrationThread,
+  OrchestrationThreadActivity,
+  OrchestrationThreadStreamItem,
+} from "@t3tools/contracts";
 
 export type TurnOutcome =
   | { state: "completed" | "error" | "interrupted" | "stopped"; turnId: string | null; lastError: string | null }
-  | { state: "needs-input"; turnId: string | null; pending: PendingRequest[] };
+  | { state: "needs-input"; turnId: string | null; pending: OrchestrationThreadActivity[] };
 
 export const EXIT_CODE_BY_OUTCOME: Record<TurnOutcome["state"], number> = {
   completed: 0,
@@ -14,102 +18,125 @@ export const EXIT_CODE_BY_OUTCOME: Record<TurnOutcome["state"], number> = {
   "needs-input": 4,
 };
 
-const TERMINAL_STATUSES: SessionStatus[] = ["idle", "ready", "interrupted", "stopped", "error"];
+/**
+ * Which turn to wait on, which decides how to read the stream's opening snapshot.
+ * - current: the thread's turn right now; an idle thread has already settled.
+ * - next: a turn dispatched after the snapshot was taken, so the snapshot's turn is an older one.
+ * - first: the first turn of a thread created by the dispatch; the snapshot may come before or after the turn starts.
+ */
+export type Awaiting = "current" | "next" | "first";
 
-export type TurnTracker = {
+/** What a thread stream has shown so far about the turn being waited on. */
+export type TurnState = {
+  awaiting: Awaiting;
   sawRunning: boolean;
-  session: Session | null;
-  pending: Map<string, PendingRequest>;
+  session: OrchestrationSession | null;
+  pending: OrchestrationThreadActivity[];
+  outcome: TurnOutcome | null;
 };
 
-export function trackerFromDetail(thread: ThreadDetail, expectNewTurn: boolean): TurnTracker {
-  const pending = new Map<string, PendingRequest>();
-  for (const activity of thread.activities) applyActivity(pending, activity);
-  const running = thread.session?.status === "running" || thread.session?.status === "starting" || thread.latestTurn?.state === "running";
-  return { sawRunning: running && !expectNewTurn, session: thread.session, pending };
+export const initialTurnState = (awaiting: Awaiting): TurnState => ({ awaiting, sawRunning: false, session: null, pending: [], outcome: null });
+
+export function isRunning(thread: Pick<OrchestrationThread, "session" | "latestTurn">): boolean {
+  return thread.session?.status === "running" || thread.session?.status === "starting" || thread.latestTurn?.state === "running";
 }
 
-export function settledOutcome(tracker: TurnTracker, latestTurnState: LatestTurnState | undefined, expectNewTurn: boolean): TurnOutcome | null {
-  if (tracker.pending.size > 0) {
-    return { state: "needs-input", turnId: tracker.session?.activeTurnId ?? null, pending: [...tracker.pending.values()] };
+/** Open approval and user-input requests: requested activities without a matching resolved one. */
+export function pendingRequests(activities: readonly OrchestrationThreadActivity[]): OrchestrationThreadActivity[] {
+  return activities.reduce(applyActivity, []);
+}
+
+export function requestId(activity: OrchestrationThreadActivity): string | undefined {
+  const payload = activity.payload as { requestId?: unknown } | null;
+  return typeof payload?.requestId === "string" ? payload.requestId : undefined;
+}
+
+function applyActivity(pending: OrchestrationThreadActivity[], activity: OrchestrationThreadActivity): OrchestrationThreadActivity[] {
+  const id = requestId(activity);
+  if (!id) return pending;
+  const others = pending.filter((open) => requestId(open) !== id);
+  if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") return [...others, activity];
+  if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") return others;
+  return pending;
+}
+
+function needsInput(state: TurnState): TurnState {
+  return state.pending.length > 0 ? { ...state, outcome: { state: "needs-input", turnId: state.session?.activeTurnId ?? null, pending: state.pending } } : state;
+}
+
+/**
+ * Folds one stream item into the state. `outcome` is set once the turn has settled or needs input.
+ * A plain subscription opens with a snapshot; one with `afterSequence` replays events instead.
+ */
+export function step(state: TurnState, item: OrchestrationThreadStreamItem): TurnState {
+  if (item.kind === "snapshot") {
+    const { thread } = item.snapshot;
+    const running = isRunning(thread);
+    const next = needsInput({ ...state, session: thread.session, pending: pendingRequests(thread.activities), sawRunning: state.sawRunning || (running && state.awaiting !== "next") });
+    if (next.outcome || running || state.awaiting === "next") return next;
+    const latest = thread.latestTurn;
+    if (!latest && state.awaiting === "first") return next;
+    // Idle: report how the latest turn ended, or "completed" for a thread that never ran one.
+    const settled = (latest?.state ?? "completed") as "completed" | "error" | "interrupted";
+    return { ...next, outcome: { state: settled, turnId: latest?.turnId ?? null, lastError: thread.session?.lastError ?? null } };
   }
-  if (expectNewTurn && !tracker.sawRunning) return null;
-  if (tracker.sawRunning) return null;
-  if (!latestTurnState || latestTurnState === "running") return null;
-  return { state: latestTurnState, turnId: null, lastError: tracker.session?.lastError ?? null };
+  return item.kind === "event" ? applyEvent(state, item.event) : state;
 }
 
-export function applyEvent(tracker: TurnTracker, event: OrchestrationEvent): TurnOutcome | null {
-  if (event.type === "thread.activity-appended") {
-    applyActivity(tracker.pending, (event.payload as { activity: Activity }).activity);
-    if (tracker.pending.size > 0) {
-      return { state: "needs-input", turnId: tracker.session?.activeTurnId ?? null, pending: [...tracker.pending.values()] };
-    }
-    return null;
+function applyEvent(state: TurnState, event: OrchestrationEvent): TurnState {
+  if (event.type === "thread.deleted") return { ...state, outcome: { state: "error", turnId: state.session?.activeTurnId ?? null, lastError: "thread was deleted" } };
+  if (event.type === "thread.activity-appended") return needsInput({ ...state, pending: applyActivity(state.pending, event.payload.activity) });
+  if (event.type !== "thread.session-set") return state;
+  const { session } = event.payload;
+  const next = { ...state, session };
+  if (session.status === "running" || session.status === "starting" || session.activeTurnId) return { ...next, sawRunning: true };
+  // An error before the turn ran is a failed start, e.g. worktree preparation.
+  if (!state.sawRunning && session.status !== "error") return next;
+  const outcome = session.status === "error" || session.status === "interrupted" || session.status === "stopped" ? session.status : "completed";
+  return { ...next, outcome: { state: outcome, turnId: state.session?.activeTurnId ?? null, lastError: session.lastError } };
+}
+
+/** Consumes a thread stream until the awaited turn settles. Returns null if the stream ends first (timeout or abort). */
+export async function waitForTurn(items: AsyncIterable<OrchestrationThreadStreamItem>, awaiting: Awaiting): Promise<TurnOutcome | null> {
+  let state = initialTurnState(awaiting);
+  for await (const item of items) {
+    state = step(state, item);
+    if (state.outcome) return state.outcome;
   }
-  if (event.type !== "thread.session-set") return null;
-  const session = (event.payload as { session: Session }).session;
-  const previous = tracker.session;
-  tracker.session = session;
-  if (session.status === "running" || session.status === "starting" || session.activeTurnId) {
-    tracker.sawRunning = true;
-    return null;
-  }
-  if (!tracker.sawRunning || !TERMINAL_STATUSES.includes(session.status)) return null;
-  const turnId = previous?.activeTurnId ?? null;
-  const state = session.status === "error" ? "error" : session.status === "interrupted" ? "interrupted" : session.status === "stopped" ? "stopped" : "completed";
-  return { state, turnId, lastError: session.lastError };
+  return null;
 }
 
-function applyActivity(pending: Map<string, PendingRequest>, activity: Activity): void {
-  const payload = (activity.payload ?? {}) as { requestId?: string };
-  const requestId = payload.requestId;
-  if (!requestId) return;
-  if (activity.kind === "approval.requested") {
-    pending.set(requestId, { kind: "approval", requestId, summary: activity.summary, payload: activity.payload, turnId: activity.turnId });
-  } else if (activity.kind === "user-input.requested") {
-    pending.set(requestId, { kind: "user-input", requestId, summary: activity.summary, payload: activity.payload, turnId: activity.turnId });
-  } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-    pending.delete(requestId);
-  }
+export function finalAssistantText(thread: Pick<OrchestrationThread, "messages">, turnId: string | null): string {
+  const assistant = thread.messages.filter((message) => message.role === "assistant");
+  const ofTurn = turnId ? assistant.filter((message) => message.turnId === turnId) : [];
+  return (ofTurn.length > 0 ? ofTurn : assistant).at(-1)?.text ?? "";
 }
 
-export function finalAssistantText(thread: ThreadDetail, turnId: string | null): string {
-  const byId = turnId ? thread.messages.filter((message) => message.turnId === turnId && message.role === "assistant") : [];
-  const candidates = byId.length > 0 ? byId : thread.messages.filter((message) => message.role === "assistant");
-  const last = candidates.at(-1);
-  return last?.text ?? "";
-}
-
-export type StreamingTexts = Map<string, string>;
-
-export function summarizeEvent(event: OrchestrationEvent, streaming: StreamingTexts = new Map()): Record<string, unknown> | null {
-  const payload = event.payload as Record<string, unknown>;
+/** Compact view of the events `watch` shows by default. Streamed assistant text is cumulative; `streaming` keeps the latest per message until the final event. */
+export function summarizeEvent(event: OrchestrationEvent, streaming: Map<string, string>): Record<string, unknown> | null {
   switch (event.type) {
     case "thread.message-sent": {
-      const messageId = String(payload.messageId);
-      if (payload.streaming === true) {
-        streaming.set(messageId, String(payload.text));
+      const { messageId, role, text, turnId } = event.payload;
+      if (event.payload.streaming) {
+        streaming.set(messageId, text);
         return null;
       }
-      const text = payload.text || streaming.get(messageId) || "";
+      const final = text || streaming.get(messageId) || "";
       streaming.delete(messageId);
-      return { type: "message", role: payload.role, text, turnId: payload.turnId, messageId };
+      return { type: "message", role, text: final, turnId, messageId };
     }
     case "thread.activity-appended": {
-      const activity = payload.activity as Activity;
-      return { type: "activity", kind: activity.kind, tone: activity.tone, summary: activity.summary, turnId: activity.turnId, requestId: (activity.payload as { requestId?: string } | null)?.requestId };
+      const { activity } = event.payload;
+      return { type: "activity", kind: activity.kind, tone: activity.tone, summary: activity.summary, turnId: activity.turnId, requestId: requestId(activity) };
     }
     case "thread.session-set": {
-      const session = payload.session as Session;
+      const { session } = event.payload;
       return { type: "session", status: session.status, activeTurnId: session.activeTurnId, lastError: session.lastError };
     }
     case "thread.turn-diff-completed":
-      return { type: "diff", turnId: payload.turnId, status: payload.status, files: (payload.files as unknown[]).length };
-    case "thread.proposed-plan-upserted": {
-      const plan = payload.proposedPlan as { id: string; planMarkdown: string };
-      return { type: "plan", planId: plan.id, markdown: plan.planMarkdown };
-    }
+      return { type: "diff", turnId: event.payload.turnId, status: event.payload.status, files: event.payload.files.length };
+    case "thread.proposed-plan-upserted":
+      return { type: "plan", planId: event.payload.proposedPlan.id, markdown: event.payload.proposedPlan.planMarkdown };
     default:
       return null;
   }

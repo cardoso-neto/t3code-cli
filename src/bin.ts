@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { boolFlag, connect, formatHelp, parseCommandArgs, type Command, type Context } from "./cli.ts";
-import { T3Error } from "./client.ts";
-import { env, models, pending, projects, providers, search, show, threads } from "./commands/discovery.ts";
+import type { T3Client } from "./client.ts";
+import { diff, env, models, pending, projects, providers, search, show, threads } from "./commands/discovery.ts";
 import { archive, pin, remove, revert, set, settle, snooze, stop, unarchive, unpin, unsettle, unsnooze } from "./commands/lifecycle.ts";
 import { envs, login } from "./commands/login.ts";
-import { diff, projectAdd, projectRemove, projectSet } from "./commands/misc.ts";
+import { projectAdd, projectRemove, projectSet } from "./commands/projects.ts";
 import { answer, approve, close, interrupt, newThread, send, wait, watch } from "./commands/turns.ts";
+import { T3Error, UsageError } from "./errors.ts";
 
 const GROUPS: [string, Command[]][] = [
   ["Connect", [login, envs, env]],
@@ -41,21 +42,26 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const command = COMMANDS.get(name);
-  if (!command) throw new T3Error(`unknown command "${name}"; run t3c --help`, 64);
+  if (!command) throw new UsageError(`unknown command "${name}"; run t3c --help`);
   const args = parseCommandArgs(rest, command.flags ?? {});
   if (boolFlag(args, "help")) {
     process.stdout.write(formatHelp(command) + "\n");
     return 0;
   }
   const json = boolFlag(args, "json");
+  let client: Promise<T3Client> | undefined;
   const context: Context = {
-    client: command.needsClient === false ? (null as never) : await connect(args),
+    client: () => (client ??= connect(args)),
     json,
     args,
     print: (value, text) => process.stdout.write((json ? JSON.stringify(value, null, 2) : text()) + "\n"),
     printLine: (line) => process.stdout.write(JSON.stringify(line) + "\n"),
   };
-  return (await command.run(context)) ?? 0;
+  try {
+    return (await command.run(context)) ?? 0;
+  } finally {
+    void client?.then((connected) => connected.close(), () => {});
+  }
 }
 
 main(process.argv.slice(2)).then(

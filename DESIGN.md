@@ -1,36 +1,35 @@
 # t3code-cli design
 
-> 🤖 Fable 5.1 via Claude Code on behalf of Nei Cardoso
+> 🤖 Opus 5.5 via Claude Code on behalf of Nei Cardoso
 
 `t3c` is a thin TypeScript CLI that creates and drives T3 Code threads over the server's public API.
 It is downstream of t3code: no server changes, no forks.
 
-Verified against t3code `v0.0.41-nightly.20260909` source and a live `0.0.40` server on 2026-09-13.
-Every command below was exercised against a scratch server with codex and claudeAgent.
+Built against t3code `v0.0.45` (pinned in `package.json` as `config.t3code`) and verified on a scratch `0.0.45` server on 2026-10-15.
 
 ## Principles
 
 - Thin client. JSON in, JSON out. No second database, no agent runtime. The server validates every payload.
+- No intermediate shapes. Commands build upstream's command types directly, and `--json` prints upstream's data unchanged. Only the text tables reshape it.
+- Functional core. `turn.ts`, `model.ts`, and `resolve.ts` are pure and fixture-tested; commands are the I/O shell around them.
 - One server operation per command, documented below, so agents can reason about side effects.
 - Discover, do not hardcode. Providers, models, and option ids come from the running server.
 - T3's own names. Flags mirror the wire fields (`--instance-id`, `--model`, `--option id=value`, `--runtime-mode`, `--interaction-mode`, `--prepare-worktree`). No aliases such as `--effort`.
 - Same idiom as the codex and claude handoff skills: prompt on stdin, JSONL on stdout, a stable id to resume, exit code carries the outcome.
-- Zero runtime dependencies. Node 22+ ships `fetch`, `WebSocket`, `parseArgs`, and `randomUUID`.
+- Zero runtime dependencies and no build. Node 22.18+ runs the TypeScript sources directly and ships `fetch`, `WebSocket`, `parseArgs`, and `randomUUID`.
 
 ## Decisions
 
-### Contracts are unpublished
+### Types come from upstream contracts
 
 `@t3tools/contracts` is `private: true`, exports TypeScript source, and is never published.
-Options were:
+Keeping a hand-typed copy meant a second description of the protocol that drifted silently.
+Instead, `scripts/contracts.sh` (run by `npm install` and `npm run typecheck`) sparse-clones `packages/contracts` at the pinned tag into the gitignored `vendor/t3code`, and `tsconfig.json` maps `@t3tools/contracts` to it.
 
-1. Depend on the t3code git repo and build the contracts package ourselves. Pulls in Effect 4 beta and couples us to an internal package's churn.
-2. Vendor the schema files. Same coupling, plus a copy to keep in sync.
-3. Hand-type only the fields we send and read, with upstream file references, and let the server validate.
-
-We chose 3. `src/contracts.ts` is about 200 lines.
-Drift shows up as a `400` with the server's schema issue in the error message, which the CLI surfaces verbatim.
-When t3code publishes a contracts package, swapping the types is mechanical.
+- Imports are `import type` only, so nothing from t3code or Effect ships at runtime.
+- WebSocket method types derive from upstream's `WsRpcGroup`: `RpcInput<"server.getConfig">` is the encoded payload, `RpcOutput<…>` the result. `client.call` and `client.stream` are typed by method tag.
+- `effect` is a devDependency at the version t3code's catalog pins for that tag.
+- Upgrading means bumping `config.t3code` and fixing what typecheck reports. Bumping to a tag with a new orchestration protocol fails at `PROTOCOL` in `client.ts` on purpose.
 
 ### Lineage is prompt content, not a CLI feature
 
@@ -39,11 +38,22 @@ The CLI does not fake one.
 When the child should know its origin, the caller prepends it to the prompt; the README and the `t3-handoff` skill show the pattern.
 Leaving it out keeps a thread free of cross-contamination.
 
-### Bootstrap turn-starts go over the WebSocket
+### All commands go over the WebSocket
 
 `POST /api/orchestration/dispatch` passes commands straight to the engine and ignores the `bootstrap` field, so a `thread.turn.start` with `bootstrap.createThread` fails with "thread does not exist".
 Only the WebSocket `orchestration.dispatchCommand` runs the create-thread, worktree, and setup-script steps.
-`T3Client.dispatch` routes commands that carry `bootstrap` over the WebSocket and everything else over HTTP.
+`T3Client.dispatch` always uses the WebSocket, so there is one dispatch path.
+One socket per process is opened lazily and multiplexed by request id.
+HTTP is left for snapshot reads, the WebSocket ticket, file upload bytes, and the unauthenticated environment descriptor.
+
+### Waiting on a turn
+
+`turn.ts` folds `orchestration.subscribeThread` items into a `TurnState` with a pure `step` function.
+How it reads the opening snapshot depends on which turn is awaited:
+
+- `current` (`wait`, `close`): the snapshot's turn. An idle thread settles immediately.
+- `next` (`send --wait`): the snapshot is taken before dispatching, so its turn is an older one. Settles after a running state.
+- `first` (`new --wait`): the thread is created by the dispatch, so the stream starts after it. The snapshot may show the turn running, settled, or not started yet (a pending turn start is not in the snapshot).
 
 ### Title seeding
 
@@ -54,18 +64,20 @@ Sending `titleSeed` makes the server regenerate the title after the first turn, 
 
 | Fact | Consequence |
 | --- | --- |
-| Commands go through one endpoint, `POST /api/orchestration/dispatch`, with a tagged `ClientOrchestrationCommand`. Reads are `GET /api/orchestration/shell` and `GET /api/orchestration/threads/:id`. | Most commands are a single HTTP call. |
+| Commands are a tagged `ClientOrchestrationCommand` sent to WS `orchestration.dispatchCommand`. Reads are `GET /api/orchestration/shell` and `GET /api/orchestration/threads/:id`. | Most commands are one dispatch. |
 | Dispatch returns only `{ sequence }`. Turn outcome arrives later as events. | `wait` and `watch` use the WebSocket stream `orchestration.subscribeThread`. |
-| The WebSocket is Effect RPC over JSON: `{_tag:"Request", id, tag, payload, headers:[]}`. Streams are ack-gated: the server withholds the next `Chunk` until the client sends `{_tag:"Ack", requestId}`. | `T3Client.subscribe` acks every chunk. Without it a subscription stalls after the first batch. |
-| Provider and model catalog is only on the wire as `ServerConfig.providers` via `server.getConfig` (WebSocket). Each model carries `capabilities.optionDescriptors`. | `providers` and `models` open one short WebSocket request. `--option` values are validated against the descriptors. |
+| The WebSocket is Effect RPC over JSON: `{_tag:"Request", id, tag, payload, headers:[]}`. Streams are ack-gated: the server withholds the next `Chunk` until the client sends `{_tag:"Ack", requestId}`. | `T3Client.stream` acks every chunk. Without it a subscription stalls after the first batch. |
+| Provider and model catalog is only on the wire as `ServerConfig.providers` via `server.getConfig` (WebSocket). Each model carries `capabilities.optionDescriptors`. | `providers` and `models` make one WebSocket call. `--option` values are validated against the descriptors. |
 | `modelSelection` is `{ instanceId, model, options: [{id, value}] }`. Effort is a per-driver option id: `reasoningEffort` (codex, grok), `effort` (claudeAgent), `variant` (opencode). | `--option id=value` is the only spelling. `t3c models` prints the ids. |
-| `thread.turn.start` accepts `bootstrap.createThread` and `bootstrap.prepareWorktree`. On failure the thread is deleted. | `new` is one round trip. |
+| `thread.turn.start` accepts `bootstrap.createThread` and `bootstrap.prepareWorktree`. A failed worktree preparation sets an `error` session; other failures delete the thread. | `new` is one round trip. `new --wait` settles as `error` on either. |
+| `subscribeThread` with `afterSequence` replays events. If the replayed range contains the thread's creation and the thread still exists, the server sends a fresh snapshot instead. | `new --wait` subscribes with `afterSequence: 0` after dispatching and handles both. |
 | Bearer tokens live 30 days. No refresh grant. `t3 auth session issue --token-only` mints one from filesystem trust. A pairing token exchanges at `POST /oauth/token`. `POST /api/auth/websocket-ticket` gives a 5-minute ticket for `ws://…/ws?wsTicket=`. | Two login paths, one credentials file, the built-in `WebSocket` works without custom headers. |
-| Running servers write `<T3 home>/{userdata,dev}/server-runtime.json` with `pid`, `port`, `origin`. `GET /.well-known/t3/environment` returns `environmentId`, `serverVersion`, `capabilities`. | Local discovery needs no configuration. |
+| Running servers write `<T3 home>/{userdata,dev}/server-runtime.json` with `pid`, `port`, `origin`. `GET /.well-known/t3/environment` returns `environmentId`, `serverVersion`, `orchestrationProtocolVersion`, `capabilities`. | Local discovery needs no configuration. A failed WebSocket connect reports a protocol mismatch from the descriptor. |
+| `/ws` takes `orchestrationProtocol=1`. Upstream `main` (after 0.0.45) moves to protocol 2: it rejects protocol 1 with `426`, removes HTTP dispatch, and replaces `thread.turn.start` with `message.dispatch` and `orchestration.launchThread`. | `t3c` speaks protocol 1 and needs a port before it can drive a protocol 2 server. |
 | Turn end: `thread.session-set` with `session.activeTurnId === null` after a running state. `status` ends in `ready`, `idle`, `interrupted`, `stopped`, or `error`. Approval and question requests arrive as `thread.activity-appended` with `kind` `approval.requested` or `user-input.requested`, and clear with the matching `.resolved`. | Exit codes and the `needs-input` state derive from these. `src/turn.ts` holds the pure state machine. |
 | Assistant text streams as `thread.message-sent` with `streaming: true` and cumulative text; the final `streaming: false` event carries empty text. | `watch` keeps the last streamed text per message and emits it on the final event. `wait` reads the final text from the detail snapshot. |
 | Archived threads are absent from the shell snapshot; `orchestration.getArchivedShellSnapshot` lists them. | Thread lookup falls back to the archived snapshot, so `unarchive <title>` works. |
-| Attachments: images go inline as `dataUrl`; other files need `attachments.createUploadUrl` then a `POST` of raw bytes with the file's mime type. Max 8 per message. | `--attach` handles both. |
+| Attachments: images go inline as `dataUrl`; other files need `attachments.createUploadUrl` then a `POST` of raw bytes with the file's mime type. The server enforces the limits (100 per message at 0.0.45). | `--attach` handles both. |
 
 ## Connection and auth
 
@@ -84,18 +96,18 @@ Resolution order: `--env` flag, then the `default` entry, then the first entry, 
 
 | Command | What it does |
 | --- | --- |
-| `t3c login --local [--base-dir] [--ttl] [--t3-bin]` | discover via `server-runtime.json`, then `t3 auth session issue --token-only --label … --base-dir …`; strips `T3_SERVICE_LAUNCHER_CONTEXT` from the child env so it works from inside a t3code-managed shell |
+| `t3c login --local [--base-dir] [--ttl] [--t3-bin]` | discover via `server-runtime.json`, then `t3 auth session issue --token-only --label … --base-dir …` |
 | `t3c login <pairing-url>` | `POST /oauth/token` with `grant_type=…token-exchange`, `subject_token`, `subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap`, `client_device_type=bot` |
 | `t3c login --token <bearer> --origin <url>` | store a token minted elsewhere |
 | `t3c envs` | list stored environments |
 
 HTTP requests send `Authorization: Bearer`.
-WebSocket connections mint a ticket, connect to `/ws?wsTicket=…&clientSurface=cli`, send one `Request`, ack each `Chunk`, and `Interrupt` on abort.
+The WebSocket mints a ticket, connects to `/ws?wsTicket=…&clientSurface=cli&orchestrationProtocol=1`, sends one `Request` per call, acks each `Chunk`, and sends `Interrupt` when a call is abandoned.
 
 ## Commands and payloads
 
 All ids are client-generated UUIDs.
-`createdAt` is the client clock; the server overwrites it.
+`client.dispatch` stamps `commandId` and `createdAt` (the client clock; the server overwrites it).
 
 ### Discover
 
@@ -141,7 +153,7 @@ All ids are client-generated UUIDs.
 | `answer <thread> <requestId> --answer q=v…` | `thread.user-input.respond { requestId, answers }`; `--dismiss` sends `thread.user-input.dismiss` |
 | `close <thread>` | `thread.turn.interrupt` if running, wait for the fence, then `thread.settle`. The one composite command, because settle is rejected during a turn. |
 
-With `--wait`, `new` and `send` subscribe before dispatching so no event is missed.
+With `--wait`, `send` subscribes before dispatching so no event is missed; `new` replays from sequence 0 after dispatching (see "Waiting on a turn").
 
 ### Change
 
@@ -163,24 +175,24 @@ With `--wait`, `new` and `send` subscribe before dispatching so no event is miss
 ```text
 src/
   bin.ts          command table, help, exit codes
-  cli.ts          parseArgs wrapper, flag helpers, table output
-  client.ts       T3Client: HTTP, WebSocket request and ack-gated subscribe
+  cli.ts          parseArgs wrapper, flag helpers, enum lists checked against upstream unions, table output
+  errors.ts       T3Error and UsageError with exit codes
+  client.ts       T3Client: typed WebSocket RPC (call, stream, dispatch) and HTTP
   credentials.ts  credentials file, local discovery, pairing URL parsing
-  contracts.ts    hand-typed wire shapes with upstream references
-  payloads.ts     pure command builders
   model.ts        --option parsing, model selection, descriptor validation
-  turn.ts         pure turn-outcome state machine, event summaries
+  turn.ts         pure turn-outcome reducer, event summaries
   resolve.ts      thread and project lookup by id, prefix, title, or path
   attachments.ts  stdin prompt, inline images, file uploads
   commands/       one file per command group
+scripts/contracts.sh  checks out upstream contracts for typecheck
 test/
-  *.test.ts       fixture-driven runners
+  *.test.ts       fixture-driven runners and unit tests
   fixtures/       <case>.input.json + <case>.expected.json
 skills/t3-handoff/SKILL.md
 ```
 
-Pure builders and the turn state machine are tested from fixtures without a server.
-Live behavior was verified against a scratch t3 server started with `t3 serve --base-dir .t3 --port 3899 --no-browser`.
+The pure core is tested from fixtures without a server.
+Live behavior was verified against a scratch server started with `t3 serve --base-dir <tmp> --port <port>`, including full `new --wait` and `send --wait` turns.
 
 ## Out of scope
 

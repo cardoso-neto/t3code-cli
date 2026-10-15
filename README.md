@@ -4,7 +4,7 @@
 No server changes, no runtime dependencies.
 
 ```sh
-npm install && npm run build && npm link
+npm install && npm link             # Node 22.18+; runs the TypeScript sources directly
 
 t3c login --local                  # same machine; or: t3c login '<pairing-url>'
 t3c models codex                   # instance ids, model slugs, option ids
@@ -25,5 +25,6 @@ Every command takes `--json`.
 
 `wait` exits 0 on completion, 2 on error, 3 if interrupted, 4 when the thread needs an approval or answer, 124 on timeout.
 
+Built against T3 Code 0.0.45 (orchestration protocol 1).
 [DESIGN.md](DESIGN.md) maps each command to the payload it sends.
 `skills/t3-handoff` teaches an agent to delegate work through `t3c`.

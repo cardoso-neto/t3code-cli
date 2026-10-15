@@ -4,15 +4,17 @@
     "turnId": "turn-0",
     "pending": [
       {
-        "kind": "user-input",
-        "requestId": "q-1",
+        "id": "a",
+        "tone": "approval",
+        "kind": "user-input.requested",
         "summary": "Which?",
         "payload": {
           "requestId": "q-1"
         },
-        "turnId": "turn-1"
+        "turnId": "turn-1",
+        "createdAt": "x"
       }
     ]
   },
-  "settledAtEvent": null
+  "settledAt": 0
 }

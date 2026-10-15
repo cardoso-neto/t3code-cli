@@ -1,100 +1,118 @@
 {
-  "detail": {
-    "id": "t",
-    "projectId": "p",
-    "title": "T",
-    "modelSelection": {
-      "instanceId": "codex",
-      "model": "m"
-    },
-    "runtimeMode": "full-access",
-    "interactionMode": "default",
-    "branch": null,
-    "worktreePath": null,
-    "latestTurn": null,
-    "session": null,
-    "createdAt": "x",
-    "updatedAt": "x",
-    "archivedAt": null,
-    "settledAt": null,
-    "hasPendingApprovals": false,
-    "hasPendingUserInput": false,
-    "hasActionableProposedPlan": false,
-    "messages": [],
-    "proposedPlans": [],
-    "activities": [],
-    "checkpoints": []
-  },
-  "expectNewTurn": true,
-  "events": [
+  "awaiting": "next",
+  "items": [
     {
-      "sequence": 1,
-      "eventId": "e1",
-      "type": "thread.session-set",
-      "aggregateId": "t",
-      "occurredAt": "2026-09-13T00:00:00.000Z",
-      "commandId": null,
-      "payload": {
-        "threadId": "t",
-        "session": {
-          "threadId": "t",
-          "status": "starting",
-          "providerName": "codex",
+      "kind": "snapshot",
+      "snapshot": {
+        "snapshotSequence": 0,
+        "thread": {
+          "id": "t",
+          "projectId": "p",
+          "title": "T",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "m"
+          },
           "runtimeMode": "full-access",
-          "activeTurnId": null,
-          "lastError": null,
-          "updatedAt": "2026-09-13T00:00:00.000Z"
+          "interactionMode": "default",
+          "branch": null,
+          "worktreePath": null,
+          "latestTurn": null,
+          "session": null,
+          "createdAt": "x",
+          "updatedAt": "x",
+          "archivedAt": null,
+          "settledAt": null,
+          "hasPendingApprovals": false,
+          "hasPendingUserInput": false,
+          "hasActionableProposedPlan": false,
+          "messages": [],
+          "proposedPlans": [],
+          "activities": [],
+          "checkpoints": []
         }
       }
     },
     {
-      "sequence": 2,
-      "eventId": "e2",
-      "type": "thread.session-set",
-      "aggregateId": "t",
-      "occurredAt": "2026-09-13T00:00:00.000Z",
-      "commandId": null,
-      "payload": {
-        "threadId": "t",
-        "session": {
+      "kind": "event",
+      "event": {
+        "sequence": 1,
+        "eventId": "e1",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
           "threadId": "t",
-          "status": "running",
-          "providerName": "codex",
-          "runtimeMode": "full-access",
-          "activeTurnId": "turn-1",
-          "lastError": null,
-          "updatedAt": "2026-09-13T00:00:00.000Z"
+          "session": {
+            "threadId": "t",
+            "status": "starting",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": null,
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
         }
       }
     },
     {
-      "sequence": 3,
-      "eventId": "e3",
-      "type": "thread.message-sent",
-      "aggregateId": "t",
-      "occurredAt": "2026-09-13T00:00:00.000Z",
-      "commandId": null,
-      "payload": {
-        "streaming": true
+      "kind": "event",
+      "event": {
+        "sequence": 2,
+        "eventId": "e2",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
+          "threadId": "t",
+          "session": {
+            "threadId": "t",
+            "status": "running",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": "turn-1",
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
+        }
       }
     },
     {
-      "sequence": 4,
-      "eventId": "e4",
-      "type": "thread.session-set",
-      "aggregateId": "t",
-      "occurredAt": "2026-09-13T00:00:00.000Z",
-      "commandId": null,
-      "payload": {
-        "threadId": "t",
-        "session": {
+      "kind": "event",
+      "event": {
+        "sequence": 3,
+        "eventId": "e3",
+        "type": "thread.message-sent",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
+          "streaming": true
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "event": {
+        "sequence": 4,
+        "eventId": "e4",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
           "threadId": "t",
-          "status": "ready",
-          "providerName": "codex",
-          "runtimeMode": "full-access",
-          "activeTurnId": null,
-          "lastError": null,
-          "updatedAt": "2026-09-13T00:00:00.000Z"
+          "session": {
+            "threadId": "t",
+            "status": "ready",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": null,
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
         }
       }
     }

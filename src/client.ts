@@ -1,182 +1,170 @@
+import { on } from "node:events";
+import { randomUUID } from "node:crypto";
 import type {
-  ClientCommand,
-  DispatchResult,
-  EnvironmentDescriptor,
-  ServerConfig,
-  ShellSnapshot,
-  ThreadDetailSnapshot,
-  WebSocketTicketResult,
-} from "./contracts.ts";
+  ExecutionEnvironmentDescriptor,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  OrchestrationShellSnapshot,
+  OrchestrationThreadDetailSnapshot,
+  WsRpcGroup,
+} from "@t3tools/contracts";
+import type * as Rpc from "effect/unstable/rpc/Rpc";
+import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import type { FromServerEncoded } from "effect/unstable/rpc/RpcMessage";
+import { T3Error } from "./errors.ts";
 
-export class T3Error extends Error {
-  readonly exitCode: number;
-  constructor(message: string, exitCode = 1) {
-    super(message);
-    this.exitCode = exitCode;
-  }
-}
+// Every WebSocket method, typed from upstream's RpcGroup. Payloads are what goes on
+// the wire (Encoded); results are the decoded shapes, which for these schemas are
+// plain JSON with branded strings.
+type Rpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
+export type RpcTag = Rpcs extends infer R ? (R extends { readonly _tag: infer T extends string } ? (string extends T ? never : T) : never) : never;
+type ByTag<T extends RpcTag> = Rpc.ExtractTag<Rpcs, T>;
+export type RpcInput<T extends RpcTag> = ByTag<T>["payloadSchema"]["Encoded"];
+export type RpcOutput<T extends RpcTag> = Rpc.SuccessExitSchema<ByTag<T>>["Type"];
 
-type RpcExit =
-  | { _tag: "Success"; value: unknown }
-  | { _tag: "Failure"; cause: { _tag: string; error?: unknown; defect?: unknown }[] };
-type RpcFromServer =
-  | { _tag: "Chunk"; requestId: string; values: unknown[] }
-  | { _tag: "Exit"; requestId: string; exit: RpcExit }
-  | { _tag: "Pong" }
-  | { _tag: "Defect"; defect: unknown }
-  | { _tag: string; [key: string]: unknown };
+export type Command = RpcInput<"orchestration.dispatchCommand">;
+/** A command minus the `commandId` and `createdAt` that `dispatch` stamps on. */
+export type CommandFields = Command extends infer C ? (C extends Command ? Omit<C, "commandId" | "createdAt"> : never) : never;
 
+/** The orchestration protocol the pinned contracts speak. Bumping contracts to a new protocol fails typecheck here. */
+const PROTOCOL: typeof ORCHESTRATION_PROTOCOL_VERSION = 1;
+
+/** One authenticated connection to a T3 Code environment. Opens a single WebSocket lazily and multiplexes requests over it. */
 export class T3Client {
   readonly origin: string;
-  private readonly token: string;
+  readonly #token: string;
+  #socket: Promise<WebSocket> | undefined;
+  #nextId = 0;
+
   constructor(origin: string, token: string) {
     this.origin = origin;
-    this.token = token;
+    this.#token = token;
   }
 
-  async environment(): Promise<EnvironmentDescriptor> {
-    return fetchEnvironment(this.origin);
+  shell(): Promise<OrchestrationShellSnapshot> {
+    return this.http("GET", "/api/orchestration/shell") as Promise<OrchestrationShellSnapshot>;
   }
 
-  shell(): Promise<ShellSnapshot> {
-    return this.get("/api/orchestration/shell");
-  }
-
-  thread(threadId: string, turnLimit?: number): Promise<ThreadDetailSnapshot> {
+  thread(threadId: string, turnLimit?: number): Promise<OrchestrationThreadDetailSnapshot> {
     const query = turnLimit ? `?turnLimit=${turnLimit}` : "";
-    return this.get(`/api/orchestration/threads/${encodeURIComponent(threadId)}${query}`);
+    return this.http("GET", `/api/orchestration/threads/${encodeURIComponent(threadId)}${query}`) as Promise<OrchestrationThreadDetailSnapshot>;
   }
 
-  dispatch(command: ClientCommand): Promise<DispatchResult> {
-    if ("bootstrap" in command && command.bootstrap) return this.rpc("orchestration.dispatchCommand", command) as Promise<DispatchResult>;
-    return this.post("/api/orchestration/dispatch", command);
+  /** Stamps and dispatches a command over the WebSocket, the only path that runs `bootstrap`. */
+  async dispatch(fields: CommandFields): Promise<{ commandId: string; sequence: number }> {
+    const commandId = randomUUID();
+    const command = { ...fields, commandId, createdAt: new Date().toISOString() } as Command;
+    return { commandId, ...(await this.call("orchestration.dispatchCommand", command)) };
   }
 
-  config(): Promise<ServerConfig> {
-    return this.rpc("server.getConfig", {}) as Promise<ServerConfig>;
+  /** A unary method: resolves with its single result. */
+  async call<T extends RpcTag>(tag: T, payload: RpcInput<T>): Promise<RpcOutput<T>> {
+    for await (const message of this.#request(tag, payload)) {
+      if (message._tag === "Exit" && message.exit._tag === "Success") return message.exit.value as RpcOutput<T>;
+    }
+    throw new T3Error(`${tag}: connection closed before a result`);
   }
 
-  async uploadBytes(relativeUrl: string, mimeType: string, bytes: Uint8Array): Promise<void> {
-    const response = await fetch(this.origin + relativeUrl, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.token}`, "content-type": mimeType },
-      body: bytes,
-    });
-    if (!response.ok) throw new T3Error(`upload failed: ${response.status} ${await response.text()}`);
-  }
-
-  async rpc(tag: string, payload: unknown): Promise<unknown> {
-    const values: unknown[] = [];
-    for await (const value of this.subscribe(tag, payload)) values.push(value);
-    return values.length === 1 ? values[0] : values;
-  }
-
-  async *subscribe(tag: string, payload: unknown, signal?: AbortSignal): AsyncGenerator<unknown> {
-    const socket = await this.openSocket();
-    const requestId = "1";
-    const queue: RpcFromServer[] = [];
-    let wake: (() => void) | null = null;
-    let closed: Error | null | undefined;
-    const settle = (error: Error | null) => {
-      closed = error;
-      wake?.();
-    };
-    socket.addEventListener("message", (event) => {
-      queue.push(JSON.parse(String(event.data)) as RpcFromServer);
-      wake?.();
-    });
-    socket.addEventListener("close", () => settle(null));
-    socket.addEventListener("error", () => settle(new T3Error("websocket error")));
-    signal?.addEventListener("abort", () => {
-      socket.send(JSON.stringify({ _tag: "Interrupt", requestId }));
-      socket.close();
-    });
-    socket.send(JSON.stringify({ _tag: "Request", id: requestId, tag, payload, headers: [] }));
-    try {
-      while (true) {
-        const message = queue.shift();
-        if (!message) {
-          if (closed !== undefined) {
-            if (closed) throw closed;
-            return;
-          }
-          await new Promise<void>((resolve) => (wake = resolve));
-          wake = null;
-          continue;
-        }
-        if (message._tag === "Chunk") {
-          for (const value of (message as { values: unknown[] }).values) yield value;
-          socket.send(JSON.stringify({ _tag: "Ack", requestId }));
-        } else if (message._tag === "Exit") {
-          const exit = (message as { exit: RpcExit }).exit;
-          if (exit._tag === "Failure") throw new T3Error(`${tag} failed: ${describeCause(exit.cause)}`);
-          if (exit.value !== undefined) yield exit.value;
-          return;
-        } else if (message._tag === "Defect") {
-          throw new T3Error(`${tag} defect: ${JSON.stringify(message.defect)}`);
-        }
-      }
-    } finally {
-      if (socket.readyState === WebSocket.OPEN) socket.close();
+  /** A streaming method: yields each item, acking every chunk (the server withholds the next chunk until then). Ends quietly when `signal` aborts. */
+  async *stream<T extends RpcTag>(tag: T, payload: RpcInput<T>, signal?: AbortSignal): AsyncGenerator<RpcOutput<T>> {
+    for await (const message of this.#request(tag, payload, signal)) {
+      if (message._tag !== "Chunk") continue;
+      yield* message.values as readonly RpcOutput<T>[];
+      this.#send({ _tag: "Ack", requestId: message.requestId });
     }
   }
 
-  private async openSocket(): Promise<WebSocket> {
-    const ticket: WebSocketTicketResult = await this.post("/api/auth/websocket-ticket", {});
-    const url = new URL("/ws", this.origin.replace(/^http/, "ws"));
-    url.searchParams.set("wsTicket", ticket.ticket);
-    url.searchParams.set("clientSurface", "cli");
-    const socket = new WebSocket(url);
-    await new Promise<void>((resolve, reject) => {
-      socket.addEventListener("open", () => resolve(), { once: true });
-      socket.addEventListener("error", () => reject(new T3Error(`websocket connect failed: ${url.origin}`)), { once: true });
-    });
-    return socket;
+  async *#request(tag: RpcTag, payload: unknown, signal?: AbortSignal): AsyncGenerator<FromServerEncoded> {
+    const socket = await this.#connect();
+    const id = String(++this.#nextId);
+    // Subscribe before sending so no reply is missed.
+    const messages = on(socket, "message", { close: ["close"], ...(signal ? { signal } : {}) });
+    this.#send({ _tag: "Request", id, tag, payload, headers: [] });
+    let done = false;
+    try {
+      for await (const [event] of messages) {
+        const message = JSON.parse(String((event as MessageEvent).data)) as FromServerEncoded;
+        if (message._tag === "Defect") throw new T3Error(`${tag}: server defect: ${JSON.stringify(message.defect)}`);
+        if (!("requestId" in message) || String(message.requestId) !== id) continue;
+        if (message._tag === "Exit") {
+          done = true;
+          if (message.exit._tag === "Failure") throw new T3Error(`${tag} failed: ${describeCause(message.exit.cause)}`);
+        }
+        yield message;
+        if (done) return;
+      }
+      if (!signal?.aborted) throw new T3Error(`${tag}: websocket closed`);
+    } catch (error) {
+      if (signal?.aborted) return;
+      throw error;
+    } finally {
+      if (!done && socket.readyState === WebSocket.OPEN) this.#send({ _tag: "Interrupt", requestId: id });
+    }
   }
 
-  private async get<T>(path: string): Promise<T> {
-    return this.request("GET", path);
+  #send(message: object): void {
+    void this.#socket?.then((socket) => socket.send(JSON.stringify(message)));
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    return this.request("POST", path, body);
+  #connect(): Promise<WebSocket> {
+    this.#socket ??= (async () => {
+      const { ticket } = (await this.http("POST", "/api/auth/websocket-ticket")) as { ticket: string };
+      const url = new URL("/ws", this.origin.replace(/^http/, "ws"));
+      url.searchParams.set("wsTicket", ticket);
+      url.searchParams.set("clientSurface", "cli");
+      url.searchParams.set("orchestrationProtocol", String(PROTOCOL));
+      const socket = new WebSocket(url);
+      const opened = await new Promise((resolve) => {
+        socket.addEventListener("open", () => resolve(true), { once: true });
+        socket.addEventListener("error", () => resolve(false), { once: true });
+      });
+      if (opened) return socket;
+      const { orchestrationProtocolVersion = 1, serverVersion } = await fetchEnvironment(this.origin);
+      if (orchestrationProtocolVersion !== PROTOCOL) {
+        throw new T3Error(`server ${serverVersion} speaks orchestration protocol ${orchestrationProtocolVersion}; this t3c speaks ${PROTOCOL}. Update t3c.`);
+      }
+      throw new T3Error(`websocket connect failed: ${url.origin}`);
+    })();
+    return this.#socket;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const response = await fetch(this.origin + path, {
-      method,
-      headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+  close(): void {
+    void this.#socket?.then((socket) => socket.close(), () => {});
+  }
+
+  /** Authenticated HTTP for the few endpoints that have no WebSocket method. */
+  async http(method: "GET" | "POST", path: string, body?: { json: unknown } | { bytes: Uint8Array; mimeType: string }): Promise<unknown> {
+    const headers: Record<string, string> = { authorization: `Bearer ${this.#token}` };
+    let payload: string | Uint8Array | undefined;
+    if (body && "json" in body) [headers["content-type"], payload] = ["application/json", JSON.stringify(body.json)];
+    if (body && "bytes" in body) [headers["content-type"], payload] = [body.mimeType, body.bytes];
+    const response = await fetch(this.origin + path, { method, headers, ...(payload === undefined ? {} : { body: payload }) });
     const text = await response.text();
     if (!response.ok) throw new T3Error(`${method} ${path} -> ${response.status}: ${describeHttpError(text)}`);
-    return text ? (JSON.parse(text) as T) : (undefined as T);
+    return text ? JSON.parse(text) : undefined;
   }
 }
 
 function describeHttpError(text: string): string {
   try {
-    const parsed = JSON.parse(text) as { message?: string; _tag?: string; issue?: unknown };
-    if (parsed.message) return parsed.message;
-    if (parsed.issue) return JSON.stringify(parsed.issue);
-    return text;
+    const parsed = JSON.parse(text) as { message?: string; issue?: unknown };
+    return parsed.message ?? (parsed.issue ? JSON.stringify(parsed.issue) : text);
   } catch {
     return text;
   }
 }
 
-function describeCause(cause: { _tag: string; error?: unknown; defect?: unknown }[]): string {
+function describeCause(cause: readonly { _tag: string; error?: unknown; defect?: unknown }[]): string {
   return cause
     .map((entry) => {
       const detail = entry.error ?? entry.defect;
-      if (detail && typeof detail === "object" && "message" in detail) return String((detail as { message: unknown }).message);
+      if (detail && typeof detail === "object" && "message" in detail) return String(detail.message);
       return JSON.stringify(detail ?? entry._tag);
     })
     .join("; ");
 }
 
-export async function fetchEnvironment(origin: string, timeoutMs = 2500): Promise<EnvironmentDescriptor> {
+export async function fetchEnvironment(origin: string, timeoutMs = 2500): Promise<ExecutionEnvironmentDescriptor> {
   const response = await fetch(`${origin}/.well-known/t3/environment`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new T3Error(`${origin} is not a T3 Code server (${response.status})`);
-  return (await response.json()) as EnvironmentDescriptor;
+  return (await response.json()) as ExecutionEnvironmentDescriptor;
 }

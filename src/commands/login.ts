@@ -2,17 +2,23 @@ import { execFile } from "node:child_process";
 import { hostname } from "node:os";
 import { promisify } from "node:util";
 import { boolFlag, stringFlag, type Command } from "../cli.ts";
-import { T3Error, fetchEnvironment } from "../client.ts";
-import { TOKEN_EXCHANGE, type AccessTokenResult } from "../contracts.ts";
+import type { AuthAccessTokenResult, AuthTokenExchangeRequest } from "@t3tools/contracts";
+import { fetchEnvironment } from "../client.ts";
+import { T3Error, UsageError } from "../errors.ts";
 import { credentialsPath, discoverLocalServer, loadCredentials, pairingTokenFromUrl, saveCredentials, type StoredEnvironment } from "../credentials.ts";
 
 const run = promisify(execFile);
+
+const TOKEN_EXCHANGE = {
+  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+  subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+  requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+} as const satisfies Partial<AuthTokenExchangeRequest>;
 
 export const login: Command = {
   name: "login",
   summary: "Store credentials for a T3 Code environment. Pass a pairing URL, or use --local for a server on this machine.",
   usage: "login [<pairing-url>] [--local] [--token <bearer> --origin <url>] [--label <text>] [--default]",
-  needsClient: false,
   flags: {
     local: { type: "boolean", help: "mint a token from the local T3 home with `t3 auth session issue` (filesystem trust)" },
     token: { type: "string", value: "bearer", help: "store an existing bearer token" },
@@ -28,7 +34,7 @@ export const login: Command = {
     const stored = boolFlag(args, "local")
       ? await loginLocal(stringFlag(args, "base-dir"), label, stringFlag(args, "ttl"), stringFlag(args, "t3-bin") ?? "t3")
       : stringFlag(args, "token")
-        ? await loginWithToken(stringFlag(args, "token")!, stringFlag(args, "origin"), label)
+        ? await loginWithToken(stringFlag(args, "token")!, stringFlag(args, "origin"))
         : await loginWithPairingUrl(args.positionals[0], label);
     const file = await loadCredentials();
     file.environments[stored.environmentId] = stored.entry;
@@ -45,12 +51,9 @@ async function loginLocal(baseDir: string | undefined, label: string, ttl: strin
   const server = await discoverLocalServer(baseDir);
   const stateBase = server.stateDir.replace(/\/(userdata|dev)$/, "");
   const argv = ["auth", "session", "issue", "--token-only", "--label", label, "--base-dir", stateBase, ...(ttl ? ["--ttl", ttl] : [])];
-  const env = { ...process.env };
-  delete env.T3_SERVICE_LAUNCHER_CONTEXT;
-  delete env.T3_BOOT_SERVICE_UNIT;
   let stdout: string;
   try {
-    ({ stdout } = await run(t3Bin, argv, { env }));
+    ({ stdout } = await run(t3Bin, argv));
   } catch (error) {
     throw new T3Error(`could not run "${t3Bin} ${argv.join(" ")}": ${(error as Error).message}\nInstall t3 (npm i -g t3) or pass --t3-bin`);
   }
@@ -63,11 +66,11 @@ async function loginLocal(baseDir: string | undefined, label: string, ttl: strin
 }
 
 async function loginWithPairingUrl(url: string | undefined, label: string): Promise<Stored> {
-  if (!url) throw new T3Error("pass a pairing URL, --local, or --token", 64);
+  if (!url) throw new UsageError("pass a pairing URL, --local, or --token");
   const { origin, token } = pairingTokenFromUrl(url);
-  const body = new URLSearchParams({ ...TOKEN_EXCHANGE, subject_token: token, client_label: label, client_device_type: "bot" });
+  const body = new URLSearchParams({ ...TOKEN_EXCHANGE, subject_token: token, client_label: label, client_device_type: "bot" } satisfies AuthTokenExchangeRequest);
   const response = await fetch(`${origin}/oauth/token`, { method: "POST", body });
-  const result = (await response.json()) as AccessTokenResult & { message?: string };
+  const result = (await response.json()) as AuthAccessTokenResult & { message?: string };
   if (!response.ok) throw new T3Error(`token exchange failed (${response.status}): ${result.message ?? JSON.stringify(result)}`);
   const environment = await fetchEnvironment(origin);
   return {
@@ -82,8 +85,8 @@ async function loginWithPairingUrl(url: string | undefined, label: string): Prom
   };
 }
 
-async function loginWithToken(token: string, origin: string | undefined, _label: string): Promise<Stored> {
-  if (!origin) throw new T3Error("--token needs --origin", 64);
+async function loginWithToken(token: string, origin: string | undefined): Promise<Stored> {
+  if (!origin) throw new UsageError("--token needs --origin");
   const environment = await fetchEnvironment(origin);
   return { environmentId: environment.environmentId, entry: { label: environment.label, origin, accessToken: token, expiresAt: null, scopes: [] } };
 }
@@ -92,7 +95,6 @@ export const envs: Command = {
   name: "envs",
   summary: "List stored environments.",
   usage: "envs",
-  needsClient: false,
   async run({ print }) {
     const file = await loadCredentials();
     const rows = Object.entries(file.environments).map(([id, env]) => ({ id, label: env.label, origin: env.origin, default: file.default === id, expiresAt: env.expiresAt }));

@@ -4,15 +4,17 @@
     "turnId": "turn-1",
     "pending": [
       {
-        "kind": "approval",
-        "requestId": "req-1",
+        "id": "a",
+        "tone": "approval",
+        "kind": "approval.requested",
         "summary": "Run rm -rf",
         "payload": {
           "requestId": "req-1"
         },
-        "turnId": "turn-1"
+        "turnId": "turn-1",
+        "createdAt": "x"
       }
     ]
   },
-  "settledAtEvent": 2
+  "settledAt": 3
 }

@@ -14,3 +14,10 @@ export class UsageError extends T3Error {
     super(message, EXIT.usage);
   }
 }
+
+/** The command's --timeout passed. Exits 124, like timeout(1). */
+export class TimeoutError extends T3Error {
+  constructor(message: string) {
+    super(message, EXIT.timeout);
+  }
+}

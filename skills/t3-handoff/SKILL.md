@@ -20,6 +20,8 @@ t3c wait "$id" --timeout 2h --json > "$result"
 - Exit codes: 0 completed, 2 error, 3 interrupted, 4 waiting on approval or input, 124 timeout.
   - On 4, run `t3c pending "$id"` and answer with `t3c approve` or `t3c answer`.
   - A timeout never cancels the turn; `t3c wait "$id"` again to keep waiting.
+- If `t3c new` fails after dispatching, its error names the thread id.
+  - `t3c show <id>` tells whether the thread exists; rerunning `t3c new` opens another one.
 - Follow up with `t3c send "$id" --wait < more.md`.
 - Pick providers, models, and option ids from `t3c providers` and `t3c models`; the installed server is authoritative.
 - Add `--prepare-worktree --branch <name>` when the child edits files and the parent keeps working in the same checkout.

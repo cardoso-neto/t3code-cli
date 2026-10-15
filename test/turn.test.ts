@@ -10,8 +10,10 @@ const FIXTURES = join(import.meta.dirname, "fixtures", "turns");
 type Case = { awaiting: Awaiting; items: OrchestrationThreadStreamItem[] };
 type Expected = { outcome: TurnOutcome | null; settledAt: number | null };
 
+const NOW = Date.parse("2026-09-13T00:00:05.000Z");
+
 function runCase({ awaiting, items }: Case): Expected {
-  let state = initialTurnState(awaiting);
+  let state = initialTurnState(awaiting, NOW);
   for (const [index, item] of items.entries()) {
     state = step(state, item);
     if (state.outcome) return { outcome: state.outcome, settledAt: index };

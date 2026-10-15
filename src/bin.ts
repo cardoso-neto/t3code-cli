@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { boolFlag, connect, formatHelp, parseCommandArgs, type Command, type Context } from "./cli.ts";
+import { boolFlag, connect, formatHelp, parseCommandArgs, timeoutSignal, type Command, type Context } from "./cli.ts";
 import type { T3Client } from "./client.ts";
 import { diff, env, models, pending, projects, providers, search, show, threads } from "./commands/discovery.ts";
 import { archive, pin, remove, revert, set, settle, snooze, stop, unarchive, unpin, unsettle, unsnooze } from "./commands/lifecycle.ts";
@@ -49,9 +49,11 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const json = boolFlag(args, "json");
+  // One deadline for the whole command, so --timeout also bounds connecting, dispatching, and reading results.
+  const deadline = timeoutSignal(args);
   let client: Promise<T3Client> | undefined;
   const context: Context = {
-    client: () => (client ??= connect(args)),
+    client: () => (client ??= connect(args, deadline)),
     json,
     args,
     print: (value, text) => process.stdout.write((json ? JSON.stringify(value, null, 2) : text()) + "\n"),

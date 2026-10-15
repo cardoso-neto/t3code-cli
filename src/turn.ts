@@ -5,6 +5,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
+import { T3Error } from "./errors.ts";
 
 export type TurnOutcome =
   | { state: "completed" | "error" | "interrupted" | "stopped"; turnId: string | null; lastError: string | null }
@@ -26,19 +27,36 @@ export const EXIT_CODE_BY_OUTCOME: Record<TurnOutcome["state"], number> = {
  */
 export type Awaiting = "current" | "next" | "first";
 
-/** What a thread stream has shown so far about the turn being waited on. */
+/** What a thread stream has shown so far about the turn being waited on. `now` is when the wait began, in epoch ms. */
 export type TurnState = {
   awaiting: Awaiting;
+  now: number;
   sawRunning: boolean;
   session: OrchestrationSession | null;
   pending: OrchestrationThreadActivity[];
   outcome: TurnOutcome | null;
 };
 
-export const initialTurnState = (awaiting: Awaiting): TurnState => ({ awaiting, sawRunning: false, session: null, pending: [], outcome: null });
+export const initialTurnState = (awaiting: Awaiting, now: number): TurnState => ({ awaiting, now, sawRunning: false, session: null, pending: [], outcome: null });
 
 export function isRunning(thread: Pick<OrchestrationThread, "session" | "latestTurn">): boolean {
   return thread.session?.status === "running" || thread.session?.status === "starting" || thread.latestTurn?.state === "running";
+}
+
+/** Upstream's QUEUED_TURN_START_GRACE_MS. */
+const QUEUED_TURN_START_GRACE_MS = 2 * 60_000;
+
+/**
+ * Upstream's queued-turn rule (`threadHasQueuedTurnStart`) on a detail snapshot: a recent user message no turn has adopted yet.
+ * Until the provider picks a turn start up, the thread shows no session or turn for it and looks idle.
+ */
+export function hasQueuedTurnStart(thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">, now: number): boolean {
+  const userMessages = thread.messages.filter((message) => message.role === "user" && !message.id.startsWith("import:"));
+  if (userMessages.length === 0 || thread.session?.status === "error") return false;
+  const messageAt = Math.max(...userMessages.map((message) => Date.parse(message.createdAt)));
+  if (Number.isNaN(messageAt) || Math.abs(now - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
+  const { latestTurn } = thread;
+  return !latestTurn || [latestTurn.requestedAt, latestTurn.startedAt, latestTurn.completedAt].every((at) => at === null || Date.parse(at) < messageAt);
 }
 
 /** Open approval and user-input requests: requested activities without a matching resolved one. */
@@ -73,7 +91,7 @@ export function step(state: TurnState, item: OrchestrationThreadStreamItem): Tur
     const { thread } = item.snapshot;
     const running = isRunning(thread);
     const next = needsInput({ ...state, session: thread.session, pending: pendingRequests(thread.activities), sawRunning: state.sawRunning || (running && state.awaiting !== "next") });
-    if (next.outcome || running || state.awaiting === "next") return next;
+    if (next.outcome || running || state.awaiting === "next" || hasQueuedTurnStart(thread, state.now)) return next;
     const latest = thread.latestTurn;
     if (!latest && state.awaiting === "first") return next;
     // Idle: report how the latest turn ended, or "completed" for a thread that never ran one.
@@ -96,14 +114,22 @@ function applyEvent(state: TurnState, event: OrchestrationEvent): TurnState {
   return { ...next, outcome: { state: outcome, turnId: state.session?.activeTurnId ?? null, lastError: session.lastError } };
 }
 
-/** Consumes a thread stream until the awaited turn settles. Returns null if the stream ends first (timeout or abort). */
-export async function waitForTurn(items: AsyncIterable<OrchestrationThreadStreamItem>, awaiting: Awaiting): Promise<TurnOutcome | null> {
-  let state = initialTurnState(awaiting);
+/** Consumes a thread stream until the awaited turn settles. */
+export async function waitForTurn(items: AsyncIterable<OrchestrationThreadStreamItem>, awaiting: Awaiting): Promise<TurnOutcome> {
+  let state = initialTurnState(awaiting, Date.now());
   for await (const item of items) {
     state = step(state, item);
     if (state.outcome) return state.outcome;
   }
-  return null;
+  throw new T3Error("thread stream ended before the turn settled");
+}
+
+/**
+ * Upstream publishes a turn's end before it flushes assistant text it still buffers, so the end alone does not mean the text is complete.
+ * The flush ends each of the turn's assistant messages with `streaming: false`.
+ */
+export function isAssistantTextFinal(thread: Pick<OrchestrationThread, "messages">, turnId: string | null): boolean {
+  return !thread.messages.some((message) => message.role === "assistant" && message.streaming && message.turnId === turnId);
 }
 
 export function finalAssistantText(thread: Pick<OrchestrationThread, "messages">, turnId: string | null): string {

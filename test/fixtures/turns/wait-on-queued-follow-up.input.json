@@ -1,0 +1,140 @@
+{
+  "awaiting": "current",
+  "items": [
+    {
+      "kind": "snapshot",
+      "snapshot": {
+        "snapshotSequence": 0,
+        "thread": {
+          "id": "t",
+          "projectId": "p",
+          "title": "T",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "m"
+          },
+          "runtimeMode": "full-access",
+          "interactionMode": "default",
+          "branch": null,
+          "worktreePath": null,
+          "latestTurn": {
+            "turnId": "turn-0",
+            "state": "completed",
+            "requestedAt": "2026-09-12T23:59:00.000Z",
+            "startedAt": "2026-09-12T23:59:00.000Z",
+            "completedAt": "2026-09-12T23:59:30.000Z",
+            "assistantMessageId": null
+          },
+          "session": {
+            "threadId": "t",
+            "status": "ready",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": null,
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          },
+          "createdAt": "x",
+          "updatedAt": "x",
+          "archivedAt": null,
+          "settledAt": null,
+          "hasPendingApprovals": false,
+          "hasPendingUserInput": false,
+          "hasActionableProposedPlan": false,
+          "messages": [
+            {
+              "id": "m0",
+              "role": "user",
+              "text": "go",
+              "turnId": null,
+              "streaming": false,
+              "createdAt": "2026-09-12T23:59:00.000Z",
+              "updatedAt": "2026-09-12T23:59:00.000Z"
+            },
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "go",
+              "turnId": null,
+              "streaming": false,
+              "createdAt": "2026-09-13T00:00:00.000Z",
+              "updatedAt": "2026-09-13T00:00:00.000Z"
+            }
+          ],
+          "proposedPlans": [],
+          "activities": [],
+          "checkpoints": []
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "event": {
+        "sequence": 1,
+        "eventId": "e1",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
+          "threadId": "t",
+          "session": {
+            "threadId": "t",
+            "status": "starting",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": null,
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "event": {
+        "sequence": 2,
+        "eventId": "e2",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
+          "threadId": "t",
+          "session": {
+            "threadId": "t",
+            "status": "running",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": "turn-1",
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "event",
+      "event": {
+        "sequence": 3,
+        "eventId": "e3",
+        "type": "thread.session-set",
+        "aggregateId": "t",
+        "occurredAt": "2026-09-13T00:00:00.000Z",
+        "commandId": null,
+        "payload": {
+          "threadId": "t",
+          "session": {
+            "threadId": "t",
+            "status": "ready",
+            "providerName": "codex",
+            "runtimeMode": "full-access",
+            "activeTurnId": null,
+            "lastError": null,
+            "updatedAt": "2026-09-13T00:00:00.000Z"
+          }
+        }
+      }
+    }
+  ]
+}

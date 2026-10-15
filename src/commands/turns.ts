@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { OrchestrationThreadStreamItem } from "@t3tools/contracts";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { OrchestrationThread, OrchestrationThreadStreamItem } from "@t3tools/contracts";
 import { attachmentsFromPaths, readPrompt } from "../attachments.ts";
-import { APPROVAL_DECISIONS, INTERACTION_MODES, RUNTIME_MODES, boolFlag, enumFlag, intFlag, listFlag, positional, requireFlag, stringFlag, timeoutSignal, type Command, type Context } from "../cli.ts";
+import { APPROVAL_DECISIONS, INTERACTION_MODES, RUNTIME_MODES, boolFlag, enumFlag, intFlag, listFlag, positional, requireFlag, stringFlag, type Command, type Context } from "../cli.ts";
 import type { CommandFields, T3Client } from "../client.ts";
-import { EXIT, T3Error, UsageError } from "../errors.ts";
+import { EXIT, T3Error, TimeoutError, UsageError } from "../errors.ts";
 import { MODEL_FLAGS, checkModel, modelFromFlags, parseKeyValues } from "../model.ts";
 import { lookupThread, resolveProject } from "../resolve.ts";
-import { EXIT_CODE_BY_OUTCOME, finalAssistantText, isRunning, requestId, summarizeEvent, waitForTurn, type TurnOutcome } from "../turn.ts";
+import { EXIT_CODE_BY_OUTCOME, finalAssistantText, isAssistantTextFinal, isRunning, requestId, summarizeEvent, waitForTurn, type TurnOutcome } from "../turn.ts";
 
 const TURN_FLAGS = {
   "prompt-file": { type: "string", value: "path", help: "read the prompt from a file instead of stdin" },
@@ -14,7 +15,7 @@ const TURN_FLAGS = {
   "runtime-mode": { type: "string", value: "mode", help: `one of ${RUNTIME_MODES.join(", ")}` },
   "interaction-mode": { type: "string", value: "mode", help: `one of ${INTERACTION_MODES.join(", ")}` },
   wait: { type: "boolean", help: "block until the turn settles and print the assistant's reply" },
-  timeout: { type: "string", value: "duration", help: "with --wait: give up after e.g. 30m, 2h (the turn keeps running)" },
+  timeout: { type: "string", value: "duration", help: "give up after e.g. 30m, 2h, exit 124 (the turn keeps running)" },
 } as const;
 
 export const newThread: Command = {
@@ -122,29 +123,36 @@ export function titleFromPrompt(text: string, max = 80): string {
   return firstLine.length > max ? `${firstLine.slice(0, max - 1)}…` : firstLine;
 }
 
+/** Ids that find the thread and message again when the dispatch's acknowledgement or the wait is lost. */
+type TurnIds = { threadId: string; messageId?: string };
+
 async function startTurn(context: Context, client: T3Client, command: Extract<CommandFields, { type: "thread.turn.start" }>): Promise<number | void> {
   const { args, print } = context;
   const { threadId } = command;
-  if (!boolFlag(args, "wait")) {
-    const result = await client.dispatch(command);
-    print({ threadId, messageId: command.message.messageId, ...result }, () => threadId);
-    return;
+  const ids = { threadId, messageId: command.message.messageId };
+  try {
+    if (!boolFlag(args, "wait")) {
+      const result = await client.dispatch(command);
+      print({ ...ids, ...result }, () => threadId);
+      return;
+    }
+    let items: AsyncIterable<OrchestrationThreadStreamItem>;
+    let result: Awaited<ReturnType<T3Client["dispatch"]>>;
+    if (command.bootstrap) {
+      // The thread does not exist until this dispatch. Replaying from the start yields a snapshot, or only events if the thread is gone again.
+      result = await client.dispatch(command);
+      items = client.stream("orchestration.subscribeThread", { threadId, afterSequence: 0 });
+    } else {
+      // Subscribe and take the snapshot first, so the turn's events cannot slip past.
+      const stream = client.stream("orchestration.subscribeThread", { threadId });
+      const first = await stream.next();
+      result = await client.dispatch(command);
+      items = prepend(first, stream);
+    }
+    return await reportOutcome(context, client, ids, await waitForTurn(items, command.bootstrap ? "first" : "next"), result.sequence);
+  } catch (error) {
+    return reportLost(context, ids, error);
   }
-  const signal = timeoutSignal(args);
-  let items: AsyncIterable<OrchestrationThreadStreamItem>;
-  let result: Awaited<ReturnType<T3Client["dispatch"]>>;
-  if (command.bootstrap) {
-    // The thread does not exist until this dispatch. Replaying from the start yields a snapshot, or only events if the thread is gone again.
-    result = await client.dispatch(command);
-    items = client.stream("orchestration.subscribeThread", { threadId, afterSequence: 0 }, signal);
-  } else {
-    // Subscribe and take the snapshot first, so the turn's events cannot slip past.
-    const stream = client.stream("orchestration.subscribeThread", { threadId }, signal);
-    const first = await stream.next();
-    result = await client.dispatch(command);
-    items = prepend(first, stream);
-  }
-  return reportOutcome(context, client, threadId, await waitForTurn(items, command.bootstrap ? "first" : "next"), result.sequence);
 }
 
 async function* prepend<T>(first: IteratorResult<T>, rest: AsyncGenerator<T>): AsyncGenerator<T> {
@@ -153,15 +161,26 @@ async function* prepend<T>(first: IteratorResult<T>, rest: AsyncGenerator<T>): A
   yield* rest;
 }
 
-async function reportOutcome({ print }: Context, client: T3Client, threadId: string, outcome: TurnOutcome | null, sequence?: number): Promise<number> {
-  if (!outcome) {
-    print({ threadId, state: "timeout" }, () => `timed out waiting on ${threadId}; the turn is still running`);
+/**
+ * A timeout prints the ids with state "timeout" and exits 124. Other errors keep their exit code and name the ids.
+ * Either way the turn, if the server accepted it, keeps running: `t3c show` tells whether it did, `t3c wait` resumes.
+ */
+function reportLost({ print }: Context, ids: TurnIds, error: unknown): number {
+  const where = `thread ${ids.threadId}${ids.messageId ? `, message ${ids.messageId}` : ""}`;
+  if (error instanceof TimeoutError) {
+    print({ ...ids, state: "timeout" }, () => `${error.message} (${where}); a started turn keeps running`);
     return EXIT.timeout;
   }
-  const { thread } = await client.thread(threadId);
+  const message = error instanceof Error ? error.message : String(error);
+  throw new T3Error(`${message} (${where})`, error instanceof T3Error ? error.exitCode : EXIT.failure);
+}
+
+async function reportOutcome({ print }: Context, client: T3Client, ids: TurnIds, outcome: TurnOutcome, sequence?: number): Promise<number> {
+  const { threadId } = ids;
+  const thread = await readResult(client, threadId, outcome);
   const text = finalAssistantText(thread, outcome.turnId ?? thread.latestTurn?.turnId ?? null);
   const files = thread.checkpoints.at(-1)?.files.length ?? 0;
-  print({ threadId, ...outcome, sequence, text, files, title: thread.title }, () => {
+  print({ ...ids, ...outcome, sequence, text, files, title: thread.title }, () => {
     if (outcome.state === "needs-input") {
       const lines = outcome.pending.map((activity) => `  ${activity.kind} ${requestId(activity)}: ${activity.summary}`);
       return `${threadId} is waiting on:\n${lines.join("\n")}\n(use t3c approve or t3c answer)`;
@@ -172,16 +191,36 @@ async function reportOutcome({ print }: Context, client: T3Client, threadId: str
   return EXIT_CODE_BY_OUTCOME[outcome.state];
 }
 
+const RESULT_POLL_MS = 250;
+const RESULT_GRACE_MS = 3000;
+
+/**
+ * Reads the thread once the settled turn's assistant text is final. Upstream flushes buffered text right after the turn ends,
+ * but some ends (a session that exits or fails) never flush, so this gives up after a short grace and returns what is there.
+ */
+async function readResult(client: T3Client, threadId: string, outcome: TurnOutcome): Promise<OrchestrationThread> {
+  for (let waited = 0; ; waited += RESULT_POLL_MS) {
+    const { thread } = await client.thread(threadId);
+    const turnId = outcome.turnId ?? thread.latestTurn?.turnId ?? null;
+    if (outcome.state === "needs-input" || isAssistantTextFinal(thread, turnId) || waited >= RESULT_GRACE_MS) return thread;
+    await sleep(RESULT_POLL_MS);
+  }
+}
+
 export const wait: Command = {
   name: "wait",
   summary: "Block until the thread's current turn settles. Exit 0 completed, 2 error, 3 interrupted, 4 waiting on approval/input, 124 timeout.",
   usage: "wait <thread> [--timeout <duration>]",
-  flags: { timeout: { type: "string", value: "duration", help: "give up after e.g. 30m (the turn keeps running)" } },
+  flags: { timeout: { type: "string", value: "duration", help: "give up after e.g. 30m, exit 124 (the turn keeps running)" } },
   async run(context) {
     const client = await context.client();
     const thread = await lookupThread(client, positional(context.args, 0, "thread"));
-    const items = client.stream("orchestration.subscribeThread", { threadId: thread.id }, timeoutSignal(context.args));
-    return reportOutcome(context, client, thread.id, await waitForTurn(items, "current"));
+    const ids = { threadId: thread.id };
+    try {
+      return await reportOutcome(context, client, ids, await waitForTurn(client.stream("orchestration.subscribeThread", { threadId: thread.id }), "current"));
+    } catch (error) {
+      return reportLost(context, ids, error);
+    }
   },
 };
 
@@ -268,16 +307,18 @@ export const close: Command = {
   name: "close",
   summary: "Interrupt if running, wait for the turn to settle, then settle the thread. Reopen with unsettle or send.",
   usage: "close <thread> [--timeout <duration>]",
-  flags: { timeout: { type: "string", value: "duration", help: "give up waiting for the interrupt after e.g. 2m (default 2m)" } },
+  flags: { timeout: { type: "string", value: "duration", default: "2m", help: "give up after e.g. 2m (default 2m)" } },
   async run({ client: connect, args, print }) {
     const client = await connect();
     const thread = await lookupThread(client, positional(args, 0, "thread"));
     const running = isRunning((await client.thread(thread.id)).thread);
     if (running) {
-      const stream = client.stream("orchestration.subscribeThread", { threadId: thread.id }, timeoutSignal(args, "2m"));
+      const stream = client.stream("orchestration.subscribeThread", { threadId: thread.id });
       const first = await stream.next();
       await client.dispatch({ type: "thread.turn.interrupt", threadId: thread.id });
-      if (!(await waitForTurn(prepend(first, stream), "current"))) throw new T3Error(`${thread.id} did not stop in time; not settled`, EXIT.timeout);
+      await waitForTurn(prepend(first, stream), "current").catch((error: unknown) => {
+        throw error instanceof TimeoutError ? new TimeoutError(`${thread.id} did not stop in time; not settled`) : error;
+      });
     }
     const result = await client.dispatch({ type: "thread.settle", threadId: thread.id });
     print({ threadId: thread.id, interrupted: running, ...result }, () => `${thread.id} settled${running ? " (after interrupt)" : ""}`);

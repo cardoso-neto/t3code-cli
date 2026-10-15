@@ -10,7 +10,7 @@ import type {
 import type * as Rpc from "effect/unstable/rpc/Rpc";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import type { FromServerEncoded } from "effect/unstable/rpc/RpcMessage";
-import { T3Error } from "./errors.ts";
+import { T3Error, TimeoutError } from "./errors.ts";
 
 // Every WebSocket method, typed from upstream's RpcGroup. Payloads are what goes on
 // the wire (Encoded); results are the decoded shapes, which for these schemas are
@@ -28,16 +28,21 @@ export type CommandFields = Command extends infer C ? (C extends Command ? Omit<
 /** The orchestration protocol the pinned contracts speak. Bumping contracts to a new protocol fails typecheck here. */
 const PROTOCOL: typeof ORCHESTRATION_PROTOCOL_VERSION = 1;
 
-/** One authenticated connection to a T3 Code environment. Opens a single WebSocket lazily and multiplexes requests over it. */
+/**
+ * One authenticated connection to a T3 Code environment. Opens a single WebSocket lazily and multiplexes requests over it.
+ * Once `deadline` aborts, every request, including connecting, fails with a TimeoutError.
+ */
 export class T3Client {
   readonly origin: string;
   readonly #token: string;
+  readonly #deadline: AbortSignal | undefined;
   #socket: Promise<WebSocket> | undefined;
   #nextId = 0;
 
-  constructor(origin: string, token: string) {
+  constructor(origin: string, token: string, deadline?: AbortSignal) {
     this.origin = origin;
     this.#token = token;
+    this.#deadline = deadline;
   }
 
   shell(): Promise<OrchestrationShellSnapshot> {
@@ -76,8 +81,9 @@ export class T3Client {
   async *#request(tag: RpcTag, payload: unknown, signal?: AbortSignal): AsyncGenerator<FromServerEncoded> {
     const socket = await this.#connect();
     const id = String(++this.#nextId);
+    const abort = [signal, this.#deadline].filter((each) => each !== undefined);
     // Subscribe before sending so no reply is missed.
-    const messages = on(socket, "message", { close: ["close"], ...(signal ? { signal } : {}) });
+    const messages = on(socket, "message", { close: ["close"], ...(abort.length ? { signal: AbortSignal.any(abort) } : {}) });
     this.#send({ _tag: "Request", id, tag, payload, headers: [] });
     let done = false;
     try {
@@ -92,8 +98,9 @@ export class T3Client {
         yield message;
         if (done) return;
       }
-      if (!signal?.aborted) throw new T3Error(`${tag}: websocket closed`);
+      throw new T3Error(`${tag}: websocket closed`);
     } catch (error) {
+      if (this.#deadline?.aborted) throw new TimeoutError(`timed out during ${tag}`);
       if (signal?.aborted) return;
       throw error;
     } finally {
@@ -116,8 +123,11 @@ export class T3Client {
       const opened = await new Promise((resolve) => {
         socket.addEventListener("open", () => resolve(true), { once: true });
         socket.addEventListener("error", () => resolve(false), { once: true });
+        this.#deadline?.addEventListener("abort", () => resolve(false), { once: true });
       });
       if (opened) return socket;
+      socket.close();
+      if (this.#deadline?.aborted) throw new TimeoutError("timed out connecting the websocket");
       const { orchestrationProtocolVersion = 1, serverVersion } = await fetchEnvironment(this.origin);
       if (orchestrationProtocolVersion !== PROTOCOL) {
         throw new T3Error(`server ${serverVersion} speaks orchestration protocol ${orchestrationProtocolVersion}; this t3c speaks ${PROTOCOL}. Update t3c.`);
@@ -137,8 +147,14 @@ export class T3Client {
     let payload: string | Uint8Array | undefined;
     if (body && "json" in body) [headers["content-type"], payload] = ["application/json", JSON.stringify(body.json)];
     if (body && "bytes" in body) [headers["content-type"], payload] = [body.mimeType, body.bytes];
-    const response = await fetch(this.origin + path, { method, headers, ...(payload === undefined ? {} : { body: payload }) });
-    const text = await response.text();
+    let response: Response, text: string;
+    try {
+      response = await fetch(this.origin + path, { method, headers, signal: this.#deadline ?? null, ...(payload === undefined ? {} : { body: payload }) });
+      text = await response.text();
+    } catch (error) {
+      if (this.#deadline?.aborted) throw new TimeoutError(`timed out during ${method} ${path}`);
+      throw error;
+    }
     if (!response.ok) throw new T3Error(`${method} ${path} -> ${response.status}: ${describeHttpError(text)}`);
     return text ? JSON.parse(text) : undefined;
   }

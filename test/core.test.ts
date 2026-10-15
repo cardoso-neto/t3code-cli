@@ -9,7 +9,7 @@ import { pairingTokenFromUrl, selectEnvironment, type CredentialsFile } from "..
 import { UsageError } from "../src/errors.ts";
 import { modelFromFlags, parseKeyValues, validateOptions } from "../src/model.ts";
 import { pickUnique } from "../src/resolve.ts";
-import { finalAssistantText, pendingRequests, summarizeEvent } from "../src/turn.ts";
+import { finalAssistantText, hasQueuedTurnStart, isAssistantTextFinal, pendingRequests, summarizeEvent } from "../src/turn.ts";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -96,6 +96,31 @@ test("finalAssistantText prefers the turn's last assistant message", () => {
   assert.equal(finalAssistantText({ messages }, "t1"), "first");
   assert.equal(finalAssistantText({ messages }, null), "other turn");
   assert.equal(finalAssistantText({ messages: [] }, "t1"), "");
+});
+
+test("hasQueuedTurnStart: a recent user message no turn has adopted", () => {
+  type Thread = Parameters<typeof hasQueuedTurnStart>[0];
+  const at = (seconds: number) => new Date(Date.UTC(2026, 8, 13) + seconds * 1000).toISOString();
+  const turn = (requestedAt: number) => ({ requestedAt: at(requestedAt), startedAt: null, completedAt: null }) as Thread["latestTurn"];
+  const thread = (latestTurn: Thread["latestTurn"], status?: string) =>
+    ({ messages: [{ id: "m1", role: "user", createdAt: at(0) }], latestTurn, session: status ? { status } : null }) as unknown as Thread;
+  const now = Date.parse(at(5));
+  assert.equal(hasQueuedTurnStart(thread(null), now), true);
+  assert.equal(hasQueuedTurnStart(thread(turn(-60)), now), true);
+  assert.equal(hasQueuedTurnStart(thread(turn(0)), now), false);
+  assert.equal(hasQueuedTurnStart(thread(null, "error"), now), false);
+  assert.equal(hasQueuedTurnStart(thread(null), Date.parse(at(180))), false);
+  assert.equal(hasQueuedTurnStart({ ...thread(null), messages: [] }, now), false);
+});
+
+test("isAssistantTextFinal waits only on the turn's streaming assistant messages", () => {
+  const messages = [
+    { role: "assistant", turnId: "t1", streaming: false },
+    { role: "assistant", turnId: "t2", streaming: true },
+    { role: "user", turnId: "t1", streaming: true },
+  ] as unknown as Parameters<typeof isAssistantTextFinal>[0]["messages"];
+  assert.equal(isAssistantTextFinal({ messages }, "t1"), true);
+  assert.equal(isAssistantTextFinal({ messages }, "t2"), false);
 });
 
 test("summarizeEvent buffers streamed text until the final message", () => {

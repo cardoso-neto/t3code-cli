@@ -4,7 +4,7 @@ import { T3Client } from "./client.ts";
 import { T3Error, UsageError } from "./errors.ts";
 import { credentialsPath, discoverLocalServer, loadCredentials, selectEnvironment } from "./credentials.ts";
 
-export type FlagSpec = { type: "string" | "boolean"; multiple?: boolean; help: string; value?: string };
+export type FlagSpec = { type: "string" | "boolean"; multiple?: boolean; help: string; value?: string; default?: string };
 export type Flags = Record<string, FlagSpec>;
 
 export type ParsedArgs = {
@@ -47,7 +47,7 @@ export const GLOBAL_FLAGS: Flags = {
 export function parseCommandArgs(argv: string[], flags: Flags): ParsedArgs {
   const options: NonNullable<ParseArgsConfig["options"]> = {};
   for (const [name, spec] of Object.entries({ ...GLOBAL_FLAGS, ...flags })) {
-    options[name] = spec.multiple ? { type: spec.type, multiple: true } : { type: spec.type };
+    options[name] = spec.multiple ? { type: spec.type, multiple: true } : { type: spec.type, ...(spec.default === undefined ? {} : { default: spec.default }) };
   }
   try {
     const parsed = parseArgs({ args: argv, options, allowPositionals: true, strict: true });
@@ -92,15 +92,15 @@ export function enumFlag<T extends string>(args: ParsedArgs, name: string, allow
   return value as T;
 }
 
-export async function connect(args: ParsedArgs): Promise<T3Client> {
+export async function connect(args: ParsedArgs, deadline?: AbortSignal): Promise<T3Client> {
   const file = await loadCredentials();
   const selected = selectEnvironment(file, stringFlag(args, "env"));
-  if (selected) return new T3Client(selected[1].origin, selected[1].accessToken);
+  if (selected) return new T3Client(selected[1].origin, selected[1].accessToken, deadline);
   const baseDir = stringFlag(args, "base-dir");
   const tokenFromEnv = process.env.T3C_TOKEN;
   if (tokenFromEnv) {
     const server = await discoverLocalServer(baseDir);
-    return new T3Client(server.runtime.origin, tokenFromEnv);
+    return new T3Client(server.runtime.origin, tokenFromEnv, deadline);
   }
   throw new T3Error(`no credentials at ${credentialsPath()}; run "t3c login --local" or "t3c login <pairing-url>"`);
 }
@@ -144,8 +144,8 @@ export function parseDuration(input: string): number {
 }
 
 /** Aborts after the --timeout duration, if one was given. */
-export function timeoutSignal(args: ParsedArgs, fallback?: string): AbortSignal | undefined {
-  const timeout = stringFlag(args, "timeout") ?? fallback;
+export function timeoutSignal(args: ParsedArgs): AbortSignal | undefined {
+  const timeout = stringFlag(args, "timeout");
   return timeout ? AbortSignal.timeout(parseDuration(timeout)) : undefined;
 }
 

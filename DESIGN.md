@@ -51,9 +51,26 @@ HTTP is left for snapshot reads, the WebSocket ticket, file upload bytes, and th
 `turn.ts` folds `orchestration.subscribeThread` items into a `TurnState` with a pure `step` function.
 How it reads the opening snapshot depends on which turn is awaited:
 
-- `current` (`wait`, `close`): the snapshot's turn. An idle thread settles immediately.
+- `current` (`wait`, `close`): the snapshot's turn. An idle thread settles immediately, unless it has a queued turn start.
+  - Upstream's queued-turn rule decides (see the server facts), so `new` or `send` followed by `wait` does not settle on the previous turn, or on none.
 - `next` (`send --wait`): the snapshot is taken before dispatching, so its turn is an older one. Settles after a running state.
 - `first` (`new --wait`): the thread is created by the dispatch, so the stream starts after it. The snapshot may show the turn running, settled, or not started yet (a pending turn start is not in the snapshot).
+
+A settled turn's text may not be complete yet: the server flushes buffered assistant text after it publishes the turn's end.
+Before reading the result, `wait` re-reads the thread until the turn's assistant messages show `streaming: false`, for at most 3 seconds.
+The bound is there because session exits and errors end a turn without a flush.
+This is best effort; only a server signal after the flush would guarantee complete text.
+
+### Deadlines and lost acknowledgements
+
+`--timeout` is one deadline for the whole command.
+`T3Client` passes it to every HTTP request, the WebSocket connect, each RPC, and the subscription, so a stalled server or tunnel cannot outlast it.
+It ends only the local command, with exit 124; the turn keeps running, and `t3c interrupt` is the remote stop.
+
+A dispatch whose acknowledgement never arrives may or may not have landed.
+`new` and `send` generate `threadId` and `messageId` before dispatching and report them on any failure: on stdout with `state: "timeout"`, or in the stderr message.
+`t3c show <threadId>` tells whether the message landed, and `t3c wait <threadId>` resumes.
+Rerunning the command instead generates fresh ids and repeats the operation.
 
 ### Title seeding
 
@@ -74,6 +91,9 @@ Sending `titleSeed` makes the server regenerate the title after the first turn, 
 | Bearer tokens live 30 days. No refresh grant. `t3 auth session issue --token-only` mints one from filesystem trust. A pairing token exchanges at `POST /oauth/token`. `POST /api/auth/websocket-ticket` gives a 5-minute ticket for `ws://…/ws?wsTicket=`. | Two login paths, one credentials file, the built-in `WebSocket` works without custom headers. |
 | Running servers write `<T3 home>/{userdata,dev}/server-runtime.json` with `pid`, `port`, `origin`. `GET /.well-known/t3/environment` returns `environmentId`, `serverVersion`, `orchestrationProtocolVersion`, `capabilities`. | Local discovery needs no configuration. A failed WebSocket connect reports a protocol mismatch from the descriptor. |
 | `/ws` takes `orchestrationProtocol=1`. Upstream `main` (after 0.0.45) moves to protocol 2: it rejects protocol 1 with `426`, removes HTTP dispatch, and replaces `thread.turn.start` with `message.dispatch` and `orchestration.launchThread`. | `t3c` speaks protocol 1 and needs a port before it can drive a protocol 2 server. |
+| A turn start waits in one provider queue shared by all threads. Until it is picked up, the thread shows no session or turn for it, only the user message. Upstream's `threadHasQueuedTurnStart` counts a user message under 2 minutes old as queued while no turn's `requestedAt`, `startedAt`, or `completedAt` has reached its time. | `wait` applies the same rule to its opening snapshot. |
+| The terminal `thread.session-set` is published before the server flushes assistant text it still buffers (paragraph and turn streaming modes, when the provider sends no item completion). No event marks the flush, and only turn completions and aborts flush. | `wait` waits, bounded, for the turn's messages to stop streaming before reading the text. |
+| Dispatch is deduplicated by `commandId`. A bootstrapped `thread.turn.start` for a thread that already exists is rejected. | A retry is only a no-op with the same ids; `t3c` generates fresh ones per run. |
 | Turn end: `thread.session-set` with `session.activeTurnId === null` after a running state. `status` ends in `ready`, `idle`, `interrupted`, `stopped`, or `error`. Approval and question requests arrive as `thread.activity-appended` with `kind` `approval.requested` or `user-input.requested`, and clear with the matching `.resolved`. | Exit codes and the `needs-input` state derive from these. `src/turn.ts` holds the pure state machine. |
 | Assistant text streams as `thread.message-sent` with `streaming: true` and cumulative text; the final `streaming: false` event carries empty text. | `watch` keeps the last streamed text per message and emits it on the final event. `wait` reads the final text from the detail snapshot. |
 | Archived threads are absent from the shell snapshot; `orchestration.getArchivedShellSnapshot` lists them. | Thread lookup falls back to the archived snapshot, so `unarchive <title>` works. |
@@ -176,8 +196,8 @@ With `--wait`, `send` subscribes before dispatching so no event is missed; `new`
 src/
   bin.ts          command table, help, exit codes
   cli.ts          parseArgs wrapper, flag helpers, enum lists checked against upstream unions, table output
-  errors.ts       T3Error and UsageError with exit codes
-  client.ts       T3Client: typed WebSocket RPC (call, stream, dispatch) and HTTP
+  errors.ts       T3Error, UsageError, and TimeoutError with exit codes
+  client.ts       T3Client: typed WebSocket RPC (call, stream, dispatch) and HTTP under one command deadline
   credentials.ts  credentials file, local discovery, pairing URL parsing
   model.ts        --option parsing, model selection, descriptor validation
   turn.ts         pure turn-outcome reducer, event summaries
@@ -198,4 +218,4 @@ Live behavior was verified against a scratch server started with `t3 serve --bas
 
 - Parent/child links, badges, auto-settle on close. All need server changes; see t3code discussion #8433 and PR #2829.
 - Terminal, preview, pull request, and git commands. The API exists; nothing in the handoff use case needs them.
-- Local queueing, retry, or scheduling. Dispatch is idempotent by `commandId`; a plain retry of the same payload is safe.
+- Local queueing, retry, or scheduling. The caller owns retries; after a lost acknowledgement, check `t3c show <threadId>` before rerunning.
